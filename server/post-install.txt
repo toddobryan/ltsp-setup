@@ -1,0 +1,6 @@
+# Install git
+sudo apt install -y git \
+&& git clone https://github.com/toddobryan/ltsp-setup.git \
+&& chmod +x ./ltsp-setup/server/server-controller.sh \
+&& sudo ./ltsp-setup/server/server-controller.sh
+
