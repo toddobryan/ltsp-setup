@@ -1,16 +1,15 @@
 #!/bin/bash
 
-STATUS="/var/log/server-controller.log"
+STATUS_LOG="/var/log/server-controller.log"
 
-if [[ -f $STATUS ]]; then
-  CURRENT_STATUS="$(cat $STATUS)"
-else
-  CURRENT_STATUS="stage0"
-  echo "$CURRENT_STATUS : $(date)"
-  echo "$CURRENT_STATUS" > "$STATUS"
-fi
+update_status() {
+  local new_status=$1
+  printf "%s : %s" "$new_status" "$(date)"
+  printf "%s" "$new_status" > "$STATUS_LOG"
 
-stage0() {
+}
+
+action_for_stage0() {
   # Update mirrors and upgrade all
   cat <<EOF >/etc/apt/sources.list.d/official-package-repositories.list
 deb http://mirror.team-cymru.com/mint-packages wilma main upstream import backport 
@@ -24,8 +23,24 @@ EOF
 
   apt upgrade -y
 
-  
+  update_status "stage1"
 
   # Reboot
   shutdown -r now
 }
+
+if [[ -f $STATUS ]]; then
+  CURRENT_STATUS="$(cat $STATUS)"
+else
+  CURRENT_STATUS="stage0"
+fi
+
+case "$CURRENT_STATUS" in
+stage0)
+  action_for_stage0
+  ;;
+*)
+  printf "Something went wrong: %s" "$CURRENT_STATUS"
+  ;;
+esac
+
