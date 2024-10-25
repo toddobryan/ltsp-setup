@@ -6,4 +6,6 @@ Runs scripts to set up LTSP server and create accounts with defaults for a list 
 
 Add bookmarks to Chrome
 LDAP server/client
+Add mime info and icons for DrRacket, etc.
+
 

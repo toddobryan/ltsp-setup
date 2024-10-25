@@ -5,9 +5,6 @@ apt update
 
 apt upgrade -y
 
-# Install standard deb packages
-apt install -y git
-
 # Install Java
 apt install -y openjdk-17-jdk
 
