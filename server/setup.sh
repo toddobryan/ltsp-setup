@@ -111,6 +111,12 @@ action_for_stage1() {
   update_status "stage2"
 }
 
+clean_up() {
+  rm /etc/sudoers.d/setup-script-perms
+  rm /etc/systemd/system/getty@tty1.service.d/override.conf
+  rm /etc/cron.d/run-setup-script
+}
+
 if [[ -f $STATUS ]]; then
   CURRENT_STATUS="$(cat $STATUS)"
 else
@@ -125,7 +131,9 @@ stage1)
   action_for_stage1
   ;;
 *)
-  printf "Something went wrong: %s" "$CURRENT_STATUS"
+  clean_up
+  printf "All stages complete: %s" "$CURRENT_STATUS"
+
   ;;
 esac
 
