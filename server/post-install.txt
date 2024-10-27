@@ -4,4 +4,4 @@
 sudo apt install -y git \
 && git clone https://github.com/toddobryan/ltsp-setup.git \
 && chmod +x /home/sysadmin/ltsp-setup/server/setup.sh \
-&& sudo /home/sysadmin/ltsp-setup/server/server-controller.sh
+&& sudo /home/sysadmin/ltsp-setup/server/setup.sh
