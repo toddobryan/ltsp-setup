@@ -6,7 +6,7 @@ update_status() {
   local new_status=$1
   printf "%s : %s" "$new_status" "$(date)"
   printf "%s" "$new_status" > "$STATUS_LOG"
-
+  read -r X
 }
 
 action_for_stage0() {
@@ -23,7 +23,7 @@ EOF
 
   apt upgrade -y
 
-  set_admin_to_autologin
+  #set_admin_to_autologin
   allow_sysadmin_to_run_script_as_root
   add_script_to_reboot_cron
 
