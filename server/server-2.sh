@@ -73,6 +73,7 @@ dconf write /org/gnome/libgnomekbd/keyboard/options "['grp\tgrp:win_space_toggle
 
 git clone https://github.com/tbocek/dvorak.git
 cd dvorak
-make make install
+make 
+make install
 
 

@@ -123,14 +123,20 @@ else
   CURRENT_STATUS="stage0"
 fi
 
+printf "Current Status is: %s" $CURRENT_STATUS
+read -r X
+
 case "$CURRENT_STATUS" in
 stage0)
+  printf "Running stage0..."
   action_for_stage0
   ;;
 stage1)
+  printf "Running stage1..."
   action_for_stage1
   ;;
 *)
+  printf "Cleaning up..."
   clean_up
   printf "All stages complete: %s" "$CURRENT_STATUS"
 
