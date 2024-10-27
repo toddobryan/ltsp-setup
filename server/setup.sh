@@ -24,8 +24,8 @@ EOF
   apt upgrade -y
 
   #set_admin_to_autologin
-  allow_sysadmin_to_run_script_as_root
-  add_script_to_reboot_cron
+  #allow_sysadmin_to_run_script_as_root
+  #add_script_to_reboot_cron
 
   update_status "stage1"
 
@@ -112,9 +112,10 @@ action_for_stage1() {
 }
 
 clean_up() {
-  rm /etc/sudoers.d/setup-script-perms
-  rm /etc/systemd/system/getty@tty1.service.d/override.conf
-  rm /etc/cron.d/run-setup-script
+  #rm /etc/sudoers.d/setup-script-perms
+  #rm /etc/systemd/system/getty@tty1.service.d/override.conf
+  #rm /etc/cron.d/run-setup-script
+  printf "Nothing to clean up..."
 }
 
 if [[ -f $STATUS ]]; then
