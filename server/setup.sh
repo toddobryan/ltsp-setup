@@ -1,6 +1,6 @@
 #!/bin/bash
 
-STATUS_LOG="/var/log/server-controller.log"
+STATUS_LOG="/var/log/server-setup.log"
 
 update_status() {
   local new_status=$1
@@ -118,8 +118,8 @@ clean_up() {
   printf "Nothing to clean up..."
 }
 
-if [[ -f $STATUS ]]; then
-  CURRENT_STATUS="$(cat $STATUS)"
+if [[ -f $STATUS_LOG ]]; then
+  CURRENT_STATUS="$(cat $STATUS_LOG)"
 else
   CURRENT_STATUS="stage0"
 fi
