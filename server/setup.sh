@@ -21,11 +21,13 @@ deb https://mirror.team-cymru.org/ubuntu noble-backports main restricted univers
 deb http://security.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
 EOF
 
+  apt update
+
   apt upgrade -y
 
-  #set_admin_to_autologin
-  #allow_sysadmin_to_run_script_as_root
-  #add_script_to_reboot_cron
+  set_admin_to_autologin
+  allow_sysadmin_to_run_script_as_root
+  add_script_to_reboot_cron
 
   update_status "stage1"
 
@@ -108,14 +110,70 @@ action_for_stage1() {
 
   apt install intellij-idea-community
 
+  # Add Dvorak-Qwerty
+
+  git clone https://github.com/tbocek/dvorak.git
+
+  cd ./dvorak || exit
+  
+  make 
+  
+  make install
+
+  # Next Stage
+
   update_status "stage2"
+
+  # Reboot
+  
+  shutdown -r now
+}
+
+action_for_stage2() {
+  # Create dconf local profile
+  mkdir -p /etc/dconf/profile
+
+  cat <<EOF >/etc/dconf/profile/user
+user-db:user
+system-db:local
+EOF
+
+  mkdir -p /etc/dconf/db/local.d
+
+  cat <<EOF >/etc/dconf/db/local.d/01-datetime
+[org/cinnamon/desktop/interface]
+clock-show-date=true
+clock-show-seconds=true
+clock-use-24h=false
+
+[org/gnome/desktop/interface]
+clock-show-date=true
+clock-show-seconds=true
+clock-format='12h'
+EOF
+
+  cat <<EOF >/etc/dconf/db/local.d/02-keyboard
+[org/gnome/libgnomekbd/keyboard]
+layouts=['us', 'us\tdvorak-alt-intl']
+options=['grp\tgrp:win_space_toggle', 'terminate\tterminate:ctrl_alt_bksp', 'ctrl\tctrl:swap_lalt_lctl', 'Compose key\tcompose:ralt']
+
+[org/cinnamon/desktop/interface]
+keyboard-layout-prefer-variant-names=true
+EOF
+
+  dconf update
+
+  # Done
+  update_status "done"
+
+  # Reboot
+  shutdown -r now
 }
 
 clean_up() {
-  #rm /etc/sudoers.d/setup-script-perms
-  #rm /etc/systemd/system/getty@tty1.service.d/override.conf
-  #rm /etc/cron.d/run-setup-script
-  printf "Nothing to clean up..."
+  rm /etc/sudoers.d/setup-script-perms
+  rm /etc/systemd/system/getty@tty1.service.d/override.conf
+  rm /etc/cron.d/run-setup-script
 }
 
 if [[ -f $STATUS_LOG ]]; then
@@ -136,11 +194,15 @@ stage1)
   printf "Running stage1..."
   action_for_stage1
   ;;
-*)
+stage2)
+  printf "Running stage2..."
+  action_for_stage2
+  ;;
+done)
   printf "Cleaning up..."
   clean_up
   printf "All stages complete: %s" "$CURRENT_STATUS"
-
+  shutdown -r now
   ;;
 esac
 
