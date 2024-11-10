@@ -203,26 +203,29 @@ else
 fi
 
 printf "Current Status is: %s" $CURRENT_STATUS
-read -r X
+sleep 3
 
 case "$CURRENT_STATUS" in
-update_mirrors)
-  printf "Running update_mirrors_and_set_to_autorun..."
-  update_mirrors_and_set_to_autorun
-  ;;
-install_packages)
-  printf "Running install_packages..."
-  install_packages
-  ;;
-modify_dconf)
-  printf "Running stage2..."
-  action_for_stage2
-  ;;
-done)
-  printf "Cleaning up..."
-  clean_up
-  printf "All stages complete: %s" "$CURRENT_STATUS"
-  shutdown -r now
-  ;;
+  update_mirrors)
+    printf "Running update_mirrors_and_set_to_autorun..."
+    update_mirrors_and_set_to_autorun
+    ;;
+  install_packages)
+    printf "Running install_packages..."
+    install_packages
+    ;;
+  modify_dconf)
+    printf "Running stage2..."
+    modify_dconf
+    ;;
+  done)
+    printf "Cleaning up..."
+    clean_up
+    printf "All stages complete: %s" "$CURRENT_STATUS"
+    shutdown -r now
+    ;;
+  *)
+    printf "ERROR. No matched case."
+    clean_up
 esac
 
