@@ -85,7 +85,7 @@ install_ltsp() {
   cp ./ltsp/binaries/binaries/* /srv/tftp/ltsp/
 }
 
-install_pkgs() {
+install_packages() {
   # Update and upgrade after kernel upgrade
   apt update
 
@@ -215,7 +215,7 @@ case "$CURRENT_STATUS" in
     install_packages
     ;;
   modify_dconf)
-    printf "Running stage2..."
+    printf "Running modify_dconf..."
     modify_dconf
     ;;
   done)
