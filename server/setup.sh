@@ -210,7 +210,7 @@ case "$CURRENT_STATUS" in
     printf "Running update_mirrors_and_set_to_autorun..."
     update_mirrors_and_set_to_autorun
     ;;
-  install_packages)
+  install_pkgs)
     printf "Running install_packages..."
     install_packages
     ;;
