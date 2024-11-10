@@ -6,19 +6,18 @@ update_status() {
   local new_status=$1
   printf "%s : %s" "$new_status" "$(date)"
   printf "%s" "$new_status" > "$STATUS_LOG"
-  read -r X
 }
 
-action_for_stage0() {
+update_mirrors_and_set_to_autorun() {
   # Update mirrors and upgrade all
-  cat <<EOF >/etc/apt/sources.list.d/official-package-repositories.list
-deb http://mirror.team-cymru.com/mint-packages wilma main upstream import backport 
+  cat <<- EOF | awk 'NR==1 && match($0, /^ +/){n=RLENGTH} {print substr($0, n+1)}' >/etc/apt/sources.list.d/official-package-repositories.list
+    deb http://mirror.team-cymru.com/mint-packages wilma main upstream import backport 
 
-deb https://mirror.team-cymru.org/ubuntu noble main restricted universe multiverse
-deb https://mirror.team-cymru.org/ubuntu noble-updates main restricted universe multiverse
-deb https://mirror.team-cymru.org/ubuntu noble-backports main restricted universe multiverse
+    deb https://mirror.team-cymru.org/ubuntu noble main restricted universe multiverse
+    deb https://mirror.team-cymru.org/ubuntu noble-updates main restricted universe multiverse
+    deb https://mirror.team-cymru.org/ubuntu noble-backports main restricted universe multiverse
 
-deb http://security.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
+    deb http://security.ubuntu.com/ubuntu/ noble-security main restricted universe multiverse
 EOF
 
   apt update
@@ -29,7 +28,7 @@ EOF
   allow_sysadmin_to_run_script_as_root
   add_script_to_reboot_cron
 
-  update_status "stage1"
+  update_status "install_pkgs"
 
   # Reboot
   shutdown -r now
@@ -38,27 +37,55 @@ EOF
 set_admin_to_autologin() {
   mkdir /etc/systemd/system/getty@tty1.service.d/
 
-  cat <<EOF  >/etc/systemd/system/getty@tty1.service.d/override.conf
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --noissue --autologin sysadmin %I $TERM
-Type=idle
+  cat <<- EOF | awk 'NR==1 && match($0, /^ +/){n=RLENGTH} {print substr($0, n+1)}' >/etc/systemd/system/getty@tty1.service.d/override.conf
+    [Service]
+    ExecStart=
+    ExecStart=-/sbin/agetty --noissue --autologin sysadmin %I $TERM
+    Type=idle
 EOF
 }
 
 allow_sysadmin_to_run_script_as_root() {
-  cat <<EOF >/etc/sudoers.d/setup-script-perms
-sysadmin ALL=NOPASSWD:/home/sysadmin/ltsp-setup/server/setup.sh
+  cat <<- EOF | awk 'NR==1 && match($0, /^ +/){n=RLENGTH} {print substr($0, n+1)}' >/etc/sudoers.d/setup-script-perms
+    sysadmin ALL=NOPASSWD:/home/sysadmin/ltsp-setup/server/setup.sh
 EOF
 }
 
 add_script_to_reboot_cron() {
-  cat <<EOF >/etc/cron.d/run-setup-script
-@reboot sysadmin sudo /home/sysadmin/ltsp-setup/server/setup.sh
+  cat <<- EOF | awk 'NR==1 && match($0, /^ +/){n=RLENGTH} {print substr($0, n+1)}' >/etc/cron.d/run-setup-script
+    @reboot sysadmin sudo /home/sysadmin/ltsp-setup/server/setup.sh
 EOF
 }
 
-action_for_stage1() {
+install_plt() {
+  # Install DrRacket
+
+  wget https://download.racket-lang.org/releases/8.14/installers/racket-8.14-x86_64-linux-cs.sh
+
+  sh racket-8.14-x86_64-linux-cs.sh --unix-style --create-dir --dest-dir /usr/
+
+  rm racket-8.14-x86_64-linux-cs.sh
+
+  rm /usr/
+}
+
+install_ltsp() {
+    # Install LTSP Packages
+
+  add-apt-repository universe
+
+  apt update -y
+
+  apt install --install-recommends -y ltsp dnsmasq nfs-kernel-server openssh-server squashfs-tools ethtool net-tools epoptes
+
+  git clone https://github.com/ltsp/binaries.git
+
+  mkdir -p /srv/tftp/ltsp
+  
+  cp ./ltsp/binaries/binaries/* /srv/tftp/ltsp/
+}
+
+install_pkgs() {
   # Update and upgrade after kernel upgrade
   apt update
 
@@ -74,14 +101,6 @@ action_for_stage1() {
   apt install -y ./google-chrome-stable_current_amd64.deb
 
   rm google-chrome-stable_current_amd64.deb
-
-  # Install DrRacket
-
-  wget https://download.racket-lang.org/releases/8.14/installers/racket-8.14-x86_64-linux-cs.sh
-
-  sh racket-8.14-x86_64-linux-cs.sh --unix-style --create-dir --dest-dir /usr/
-
-  rm racket-8.14-x86_64-linux-cs.sh
 
   # Install VSCode
 
@@ -122,43 +141,44 @@ action_for_stage1() {
 
   # Next Stage
 
-  update_status "stage2"
+  update_status "modify_dconf"
 
   # Reboot
   
   shutdown -r now
 }
 
-action_for_stage2() {
+modify_dconf() {
   # Create dconf local profile
   mkdir -p /etc/dconf/profile
 
-  cat <<EOF >/etc/dconf/profile/user
-user-db:user
-system-db:local
+  cat <<- EOF | awk 'NR==1 && match($0, /^ +/){n=RLENGTH} {print substr($0, n+1)}' >/etc/dconf/profile/user
+    user-db:user
+    system-db:local
 EOF
 
   mkdir -p /etc/dconf/db/local.d
 
-  cat <<EOF >/etc/dconf/db/local.d/01-datetime
-[org/cinnamon/desktop/interface]
-clock-show-date=true
-clock-show-seconds=true
-clock-use-24h=false
+  cat <<- EOF | awk 'NR==1 && match($0, /^ +/){n=RLENGTH} {print substr($0, n+1)}' >/etc/dconf/db/local.d/01-datetime
+    [org/cinnamon/desktop/interface]
+    clock-show-date=true
+    clock-show-seconds=true
+    clock-use-24h=false
 
-[org/gnome/desktop/interface]
-clock-show-date=true
-clock-show-seconds=true
-clock-format='12h'
+    [org/gnome/desktop/interface]
+    clock-show-date=true
+    clock-show-seconds=true
+    clock-format='12h'
 EOF
 
-  cat <<EOF >/etc/dconf/db/local.d/02-keyboard
-[org/gnome/libgnomekbd/keyboard]
-layouts=['us', 'us\tdvorak-alt-intl']
-options=['grp\tgrp:win_space_toggle', 'terminate\tterminate:ctrl_alt_bksp', 'ctrl\tctrl:swap_lalt_lctl', 'Compose key\tcompose:ralt']
+  cat <<- EOF | awk 'NR==1 && match($0, /^ +/){n=RLENGTH} {print substr($0, n+1)}' >/etc/dconf/db/local.d/02-keyboard
+    [org/gnome/libgnomekbd/keyboard]
+    layouts=['us', 'us\tdvorak-alt-intl']
+    options=['grp\tgrp:win_space_toggle', 'terminate\tterminate:ctrl_alt_bksp', 'ctrl\tctrl:swap_lalt_lctl', 'Compose key\tcompose:ralt']
 
-[org/cinnamon/desktop/interface]
-keyboard-layout-prefer-variant-names=true
+    [org/cinnamon/desktop/interface]
+    keyboard-layout-show-flags=false
+    keyboard-layout-prefer-variant-names=true
 EOF
 
   dconf update
@@ -179,22 +199,22 @@ clean_up() {
 if [[ -f $STATUS_LOG ]]; then
   CURRENT_STATUS="$(cat $STATUS_LOG)"
 else
-  CURRENT_STATUS="stage0"
+  CURRENT_STATUS="update_mirrors"
 fi
 
 printf "Current Status is: %s" $CURRENT_STATUS
 read -r X
 
 case "$CURRENT_STATUS" in
-stage0)
-  printf "Running stage0..."
-  action_for_stage0
+update_mirrors)
+  printf "Running update_mirrors_and_set_to_autorun..."
+  update_mirrors_and_set_to_autorun
   ;;
-stage1)
-  printf "Running stage1..."
-  action_for_stage1
+install_packages)
+  printf "Running install_packages..."
+  install_packages
   ;;
-stage2)
+modify_dconf)
   printf "Running stage2..."
   action_for_stage2
   ;;
