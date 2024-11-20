@@ -56,18 +56,17 @@ add_script_to_reboot_cron() {
 EOF
 }
 
+install_standard_apps() {
+  # Add more standard apps you want to add to both server and client here
+  apt install -y openjdk-17-jdk
+}
+
 install_plt() {
   # Install DrRacket
-
   wget https://download.racket-lang.org/releases/8.14/installers/racket-8.14-x86_64-linux-cs.sh
   sh racket-8.14-x86_64-linux-cs.sh --unix-style --create-dir --dest-dir /usr/
   rm racket-8.14-x86_64-linux-cs.sh
   # TODO: add mimetypes and icons
-}
-
-install_standard_apps() {
-  # Add more standard apps you want to add to both server and client here
-  apt install -y openjdk-17-jdk
 }
 
 install_chrome() {
@@ -96,18 +95,6 @@ install_intellij() {
   apt update
   apt install intellij-idea-community
 }
-
-install_server_ltsp() {
-  # Install LTSP Packages
-  add-apt-repository universe
-  apt update -y
-  apt install --install-recommends -y ltsp dnsmasq nfs-kernel-server openssh-server squashfs-tools ethtool net-tools epoptes
-
-  git clone https://github.com/ltsp/binaries.git
-  mkdir -p /srv/tftp/ltsp
-  cp ./ltsp/binaries/binaries/* /srv/tftp/ltsp/
-}
-
 
 add_dvorak_qwerty_keymap() {
   # Add Dvorak-Qwerty
