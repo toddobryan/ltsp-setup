@@ -63,44 +63,37 @@ install_standard_apps() {
 
 install_plt() {
   # Install DrRacket
-  wget https://download.racket-lang.org/releases/8.14/installers/racket-8.14-x86_64-linux-cs.sh
-  sh racket-8.14-x86_64-linux-cs.sh --unix-style --create-dir --dest-dir /usr/
-  rm racket-8.14-x86_64-linux-cs.sh
+  wget https://download.racket-lang.org/installers/8.15/racket-8.15-x86_64-linux-cs.sh && sh racket-8.15-x86_64-linux-cs.sh --unix-style --create-dir --dest /usr/ && rm racket-8.15-x86_64-linux-cs.sh
   # TODO: add mimetypes and icons
 }
 
 install_chrome() {
   # Install Chrome
-  wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-  apt install -y ./google-chrome-stable_current_amd64.deb
-  rm google-chrome-stable_current_amd64.deb
+  wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && apt install -y ./google-chrome-stable_current_amd64.deb && rm google-chrome-stable_current_amd64.deb
 }
 
 install_vscode() {
   # Install VSCode
-  apt update
-  apt install -y software-properties-common apt-transport-https
-  wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
-  install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+  apt update && \
+  apt install -y software-properties-common apt-transport-https && \
+  wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg && \
+  install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg && \
   printf "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" \
-  | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
-  rm -f packages.microsoft.gpg
-  apt update
-  apt install -y code
+  | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null && \
+  rm -f packages.microsoft.gpg && apt update && apt install -y code
 }
 
 install_intellij() {
   # Install IntelliJ IDEA
-  add-apt-repository -y ppa:mmk2410/intellij-idea
-  apt update
+  add-apt-repository -y ppa:mmk2410/intellij-idea && apt update && \
   apt install intellij-idea-community
 }
 
 add_dvorak_qwerty_keymap() {
   # Add Dvorak-Qwerty
-  git clone https://github.com/tbocek/dvorak.git
-  cd ./dvorak || exit
-  make
+  git clone https://github.com/tbocek/dvorak.git && \
+  cd ./dvorak || exit && \
+  make && \
   make install
 }
 
