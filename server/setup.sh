@@ -67,7 +67,11 @@ EOF
 handle_networking() {
   write_hostname
   write_hosts
+
+  rm /etc/netplan/*
+  
   write_netplan
+  chmod go-r /etc/netplan/static_and_dhcp.yaml
 
   netplan apply
 }
