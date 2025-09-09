@@ -1,0 +1,7 @@
+# Insert the guest additions and turn on clipboard sharing.
+
+# Install git
+sudo apt install -y git \
+&& git clone https://github.com/toddobryan/ltsp-setup.git \
+&& chmod +x /home/sysadmin/ltsp-setup/client/setup.sh \
+&& sudo /home/sysadmin/ltsp-setup/client/setup.sh
