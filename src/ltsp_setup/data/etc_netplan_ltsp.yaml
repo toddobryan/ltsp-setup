@@ -1,0 +1,12 @@
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    wakeonlan: true
+    linklocal: []
+    ${ETH0}:
+      dhcp4: true
+    ${ETH1}:
+      renderer: networkd
+      addresses:
+        - 192.168.67.1/24

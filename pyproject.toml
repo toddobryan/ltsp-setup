@@ -1,26 +1,28 @@
 [project]
 name = "ltsp-setup"
 version = "0.1.0"
-description = ""
+description = "Scripts to simplify setting up ltsp"
 authors = [
     {name = "Todd O'Bryan",email = "toddobryan@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = [
-    "typer (>=0.17.4,<0.18.0)"
-]
+requires-python = ">=3.12,<4.0"
+dynamic = ["classifiers", "dependencies"]
 
-[tool.poetry]
-packages = [{include = "ltsp_setup", from = "src"}]
-
-[tool.poetry.scripts]
+[project.scripts]
 ltsp-setup = "ltsp_setup.main:app"
-
-[tool.poetry.group.dev.dependencies]
-mypy = "^1.17.1"
-black = "^25.1.0"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+black = "^25.1.0"
+mypy = "^1.17.1"
+poetry-core = "^2.1.3"
+
+
+[tool.poetry.dependencies]
+black = "^25.1.0"
+rich = "^14.1.0"
+typer = "^0.17.4"
