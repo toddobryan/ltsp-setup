@@ -12,6 +12,7 @@ def handle_networking(
 ) -> None:
     write_etc_hostname(hostname, debug)
     write_etc_hosts(hostname, alt_hostnames, debug)
+    check_call(["rm", "/etc/netplan/*"], debug)
     write_netplan(nic_for_internet, nic_for_ltsp, debug)
     check_call(["chmod", "go-r", NETPLAN_FILE], debug)
     check_call(["netplan", "apply"], debug)
