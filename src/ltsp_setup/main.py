@@ -259,9 +259,50 @@ def image_create_template(
 
 @image_app.command("build")
 def image_build(debug: DebugOption = True, config: ConfigOption = None) -> None:
-    """Shut the client template down and rebuild the netboot image."""
+    """Shut the client template down and rebuild the netboot image.
+
+    Publishes the build but does not make it live -- run `image set-default`
+    once it's been tested.
+    """
     _require_root(debug)
-    image.build_image(_context(debug, config))
+    name = image.build_image(_context(debug, config))
+    console.print(f"[bold green]Built:[/bold green] {name}")
+    console.print(
+        f"Not live yet. Test it, then run:  "
+        f"sudo ltsp-setup image set-default {name} --no-debug"
+    )
+
+
+@image_app.command("set-default")
+def image_set_default(
+    name: str, debug: DebugOption = True, config: ConfigOption = None
+) -> None:
+    """Point DEFAULT_IMAGE at a published build and regenerate the boot menu.
+
+    Also how to revert: pass the name of a previous, still-on-disk build
+    (see `image list`) to fall back to it immediately, no rebuild needed.
+    """
+    _require_root(debug)
+    image.set_default_image(_context(debug, config), name)
+
+
+@image_app.command("list")
+def image_list(config: ConfigOption = None) -> None:
+    """Show every published build and which one is currently live."""
+    ctx = _context(False, config)
+    current = image.current_default_image(ctx)
+    names = image.list_published_images(ctx)
+    if not names:
+        console.print(f"No images published yet under {image.PUBLISHED_IMAGE_DIR}.")
+        return
+    for name in names:
+        marker = "[bold green]* live[/bold green]" if name == current else ""
+        console.print(f"  {name}  {marker}")
+    if current is not None and current not in names:
+        console.print(
+            f"[yellow]warning:[/yellow] DEFAULT_IMAGE is {current!r}, which "
+            f"isn't among the published images above."
+        )
 
 
 @image_app.command("status")

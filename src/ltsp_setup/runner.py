@@ -147,6 +147,16 @@ class Runner:
         path.write_text(content)
         path.chmod(mode)
 
+    def read_text(self, path: Path) -> str:
+        """Read a file's current contents.
+
+        Always runs for real, even in a dry run -- this is inspection, not a
+        change, the same reasoning as ``Libvirt.check_host_tools()`` running
+        for real during a dry run (see ``lab/virt.py``): better to fail
+        loudly here than produce a preview built on a guess.
+        """
+        return path.read_text()
+
     def append_line(self, path: Path, line: str) -> None:
         """Append ``line`` to ``path`` unless it is already there."""
         self._show("append", f"{line!r} -> {path}")

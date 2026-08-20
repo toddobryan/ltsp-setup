@@ -51,3 +51,9 @@ def test_remove_skips_directories(tmp_path: Path) -> None:
     directory.mkdir()
     Runner(dry_run=False).remove([directory])
     assert directory.exists()
+
+
+def test_read_text_reads_for_real_even_in_a_dry_run(tmp_path: Path) -> None:
+    target = tmp_path / "existing.conf"
+    target.write_text("hello\n")
+    assert Runner(dry_run=True).read_text(target) == "hello\n"

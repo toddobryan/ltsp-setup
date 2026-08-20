@@ -28,3 +28,19 @@ ltsp_prefix = 24
 # "upstream" fetches the newest release from racket-lang.org at install time.
 racket_source = "ppa"
 java_package = "openjdk-17-jdk"
+
+[client_template]
+# Named to match the existing pre-ltsp-setup VMs on this server
+# (mint-22.2-xfce-client, etc.) rather than the tool's own default name.
+vm_name = "mint-22.3-xfce-client"
+image_name = "mint-22.3-xfce-client"
+disk_path = "/var/lib/libvirt/images/mint-22.3-xfce-client.qcow2"
+
+[lab]
+# Reusing the lab's golden-image/overlay machinery on the server itself so
+# the client-template can be rebuilt from a clean, minimal Mint 22.3 install
+# in seconds (`lab reset mint-22.3-xfce-client`) instead of re-running the
+# interactive installer every time an iteration on the `client` plan goes
+# wrong. Named to match this server's existing "-fresh" / "-client"
+# convention (mint-22.2-xfce-fresh / mint-22.2-xfce-client).
+golden_name = "mint-22.3-xfce-fresh"

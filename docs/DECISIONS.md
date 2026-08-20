@@ -57,6 +57,44 @@ The golden Mint 22.3 image was being built by hand when this was written;
 it's since finished and is frozen (`chmod 444`, domain undefined) per the
 "Golden image + copy-on-write clones" section below.
 
+**The remaining unverified path from above is now verified too** (2026-08-20):
+`steps/image.py::create_client_template`/`build_image` ran for real on the
+actual production server (`200-231-server`), not the lab workaround —
+`mint-22.3-xfce-client` was installed directly as a KVM VM on the server
+itself, imaged locally, no cross-machine hand-carry needed. Along the way:
+
+- Reused the lab's golden-image/COW-overlay machinery (`lab create-client-template`
+  / `lab reset`) on the server itself, purely as a development convenience —
+  freeze a minimal install once (`mint-22.3-xfce-fresh.qcow2`), then clone
+  and re-run the `client` plan in seconds instead of reinstalling Mint by
+  hand on every iteration. Not part of the documented production path above,
+  which still does a fresh install directly; this is an option if that gets
+  tedious.
+- Added dated image names (`mint-22.3-xfce-client-2026-08-20`, matching this
+  server's own pre-existing convention from before this tool existed) plus
+  `image set-default`/`image list`, so a build is published without going
+  live immediately, and reverting to any previous still-on-disk build is
+  just `image set-default <name>` again — no rebuild. See
+  `steps/image.py::dated_image_name`/`set_default_image`.
+- **`server.configure_ltsp` must not be run against this real server.** Its
+  full-file `ltsp.conf` template would silently destroy real, already-active
+  settings (`NFS_HOME=1`, `FSTAB_HOME`, `LIGHTDM_CONF`) that predate this
+  tool and aren't reflected in `data/ltsp.conf`. `set_default_image` patches
+  only the `DEFAULT_IMAGE` line in place instead — see
+  `steps/image.py::_with_default_image`.
+- Two real bugs found building the actual production image, both now fixed
+  and covered by regression tests: `run_ltsp_image` once passed a dated
+  name to `ltsp image` while the raw source was still written under the
+  static undated name (`ltsp image <name>` needs the *same* name for both
+  its source and its output — see `man ltsp-image`); and
+  `list_published_images` used `Path.glob`, which silently swallows
+  `PermissionError` on `/srv/ltsp/images` (root-owned `0700`) and reported
+  "nothing published" instead of failing loudly.
+- **Confirmed booting on real hardware**, not just a VM: two physical lab
+  machines, one on each of the school's two routers, both PXE-booted
+  `mint-22.3-xfce-client-2026-08-20` successfully — TFTP served the new
+  image's `initrd.img`/`vmlinuz` by name, confirmed from dnsmasq's own log.
+
 ---
 
 ## Decisions, and why
@@ -348,19 +386,40 @@ Recording these too, same reason as above.
   full Rust toolchain are the four big items. `ltsp image` squashfs-compresses,
   so the netboot image will be much smaller than the disk it came from.
 - **Unattended Mint install.**
-- **NFSv4 + Kerberos for `/home` instead of SSHFS.** Motivated by a real
-  concern (2026-08-19): Chrome startup gets slow when many students launch
-  it at once, and NFSv4 is meaningfully faster than the default SSHFS
+- **NFSv4 + Kerberos for `/home` instead of plain NFSv3.** Motivated by a
+  real concern (2026-08-19): Chrome startup gets slow when many students
+  launch it at once, and NFSv4 is meaningfully faster than SSHFS
   (kernel-space, compound RPCs, delegation caching) even with Kerberos
   encryption (`sec=krb5p`) turned on — unlike plain NFSv3, which is faster
-  but has no real per-user auth (`no_root_squash` + UID-trust means one
-  client can impersonate another's UID) and was rejected for that reason.
-  Deferred because it's purely additive on top of what exists — nothing to
-  undo. LTSP's own switch is `NFS_HOME=1` + a `FSTAB_HOME` fstab line in
-  `ltsp.conf` (`man ltsp-nfs` has the NFSv3 example verbatim), then
-  `ltsp initrd` + `ltsp nfs`. The separate, genuinely nontrivial piece is
-  standing up a Kerberos KDC and keytabs for the server and every client,
-  which doesn't conflict with SSHFS running in the meantime.
+  than SSHFS but has no real per-user auth (`no_root_squash` + UID-trust
+  means one client can impersonate another's UID) and was rejected for that
+  reason on its own. Deferred because it's purely additive on top of what
+  exists — nothing to undo. LTSP's own switch is `NFS_HOME=1` + a
+  `FSTAB_HOME` fstab line in `ltsp.conf` (`man ltsp-nfs` has the NFSv3
+  example verbatim), then `ltsp initrd` + `ltsp nfs`.
+
+  **Correction (2026-08-20):** this whole note was written assuming SSHFS
+  is what's currently live and slow. Checking the real production
+  `/etc/ltsp/ltsp.conf` on this server shows `NFS_HOME=1` and `FSTAB_HOME`
+  already set — **this server is already on plain NFSv3, not SSHFS.**
+  Either the Chrome slowness reported last school year happened under
+  NFSv3 already (which would mean the SSHFS→NFSv4 speed story above isn't
+  the actual explanation, and something else — concurrent NFSv3 load,
+  Chrome's own profile/lock behavior, something else entirely — is worth
+  checking first) or the server moved off SSHFS at some point without this
+  doc being updated. Not resolved; see the timing-test item below before
+  assuming NFSv4+Kerberos is the fix. The separate, genuinely nontrivial
+  piece — standing up a Kerberos KDC and keytabs for the server and every
+  client — still doesn't conflict with NFSv3 running in the meantime.
+- **Timing tests: NFSv3 vs SSHFS for `/home`.** Added 2026-08-20, prompted
+  by the correction just above: before spending the KDC/LDAP effort on
+  NFSv4+Kerberos, get real numbers instead of assuming. Measure Chrome
+  startup (and general `/home` latency, e.g. `dbench`/`fio` against a real
+  mounted home dir) under concurrent load, comparing this server's current
+  NFSv3 setup against SSHFS, on the same client hardware. If NFSv3 turns
+  out to already be fast enough and the reported slowness has some other
+  cause, that changes whether the NFSv4+Kerberos investment (below) is
+  actually worth it.
 
   There's a second real bug this could fix, but only if scoped correctly:
   `pamltsp` (`ltsp/client/login/pamltsp` upstream) implements the PAM
@@ -368,7 +427,20 @@ Recording these too, same reason as above.
   phase at all, so a student running `passwd` on the client silently
   rewrites the ephemeral client's own `/etc/shadow` — no effect on the
   server, gone on next reboot either way. Confirmed as a known, upstream
-  `wontfix`. Swapping the `/home` *mount protocol* (SSHFS → NFSv4) doesn't
+  `wontfix`.
+
+  **A second real symptom of the same gap** (reported 2026-08-20, a
+  recurring problem last school year): when a student's password is changed
+  on the server, their GNOME login keyring — created under the old
+  password — no longer auto-unlocks, because `pamltsp` never runs the PAM
+  `password` phase that would keep it in sync. Every time the student then
+  opens Chrome (or any app that touches the keyring) they get a
+  keyring/login password mismatch prompt and have to click Cancel
+  repeatedly to get past it. Same root cause as the `passwd` bug above,
+  same fix (SSSD implementing the PAM `password` phase properly) — no
+  separate design needed, just another reason the SSSD work is worth doing.
+
+  Swapping the `/home` *mount protocol* (SSHFS → NFSv4) doesn't
   touch this — auth and home-mounting are separate mechanisms in LTSP. What
   fixes it is replacing `pamltsp` with SSSD for account/auth. **Correction
   to the note above (2026-08-19): this isn't "students use `kpasswd`
@@ -410,6 +482,26 @@ Recording these too, same reason as above.
   would call, but the "boot the template, update its packages, shut it back
   down" half doesn't exist yet — Todd wants that added later, once the
   create/build split above has actually been exercised on real hardware.
+- **Chrome's stale singleton lockfile.** Real recurring problem last school
+  year (reported 2026-08-20, not yet reproduced or fixed on this build): if
+  a student's session ends uncleanly — powering off the thin client, or
+  otherwise leaving Chrome "running" from the client's point of view —
+  `~/.config/google-chrome/Singleton{Lock,Cookie,Socket}` survive in the
+  student's (NFS-mounted) home directory. On the next login, `google-chrome`
+  tries to hand off to that "existing" instance over the singleton socket,
+  gets no response since the process is long gone, and just exits — no
+  error, no window, nothing, so clicking the launcher looks like it did
+  nothing at all. Todd wrote a `fix-chrome` script students could run by
+  hand to delete the lockfiles; the better fix is automatic. Because home is
+  NFS-mounted and each thin-client login is a fresh session, a login can
+  never legitimately find a live Chrome process still holding that lock —
+  whatever's there is stale — so it should be safe to unconditionally clear
+  `~/.config/google-chrome/Singleton*` at the start of every session, before
+  Chrome ever runs. Two ways to do that, neither built yet: a login-time
+  cleanup step (fits alongside `steps/common.py::configure_dconf`, the same
+  place student defaults are meant to land — see "Student default
+  configuration" above) or a wrapper around the `google-chrome` launcher
+  itself.
 
 ## Dropped from the app list
 

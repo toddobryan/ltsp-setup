@@ -15,14 +15,21 @@ a cron job) once the template exists.
 
 from __future__ import annotations
 
+import re
 import time
+from datetime import date
 from pathlib import Path
 
 from ltsp_setup.runner import StepFailed
 from ltsp_setup.stages import Context
+from ltsp_setup.steps.server import LTSP_CONF
 from ltsp_setup.virt import Libvirt
 
 SOURCE_IMAGE_DIR = Path("/srv/ltsp")
+
+# Where `ltsp image` actually publishes each build -- LTSP's own default
+# IMAGE_DIR, not something this tool configures.
+PUBLISHED_IMAGE_DIR = Path("/srv/ltsp/images")
 
 # How often to poll `virsh domstate` while waiting for a shutdown.
 POLL_INTERVAL_S = 2
@@ -110,12 +117,24 @@ def shutdown_client_template(ctx: Context) -> None:
     lv.virsh("destroy", ct.vm_name, check=False)
 
 
-def raw_image_path(ctx: Context) -> Path:
-    """Where the raw source image for ``ltsp image`` lives."""
-    return SOURCE_IMAGE_DIR / f"{ctx.settings.client_template.image_name}.img"
+def raw_image_path(ctx: Context, image_name: str | None = None) -> Path:
+    """Where the raw source image for ``ltsp image`` lives.
+
+    ``ltsp image <name>`` uses the *same* name for both its source
+    (``/srv/ltsp/<name>.img``) and its published output
+    (``/srv/ltsp/images/<name>.img``) -- see ``man ltsp-image``. Defaults to
+    the configured ``client_template.image_name`` (undated) so the lab's
+    cross-machine workflow (``convert_to_raw`` on one machine,
+    ``import_raw_image``/``run_ltsp_image`` on another) keeps agreeing on
+    the filename without anything explicit passed between them; pass
+    ``image_name`` explicitly to use a specific (e.g. dated) build name
+    instead.
+    """
+    name = image_name or ctx.settings.client_template.image_name
+    return SOURCE_IMAGE_DIR / f"{name}.img"
 
 
-def convert_to_raw(ctx: Context) -> Path:
+def convert_to_raw(ctx: Context, image_name: str | None = None) -> Path:
     """Convert the template's qcow2 disk to the raw image ``ltsp image`` wants.
 
     Split out from ``build_image`` so it can run on a different machine than
@@ -125,7 +144,7 @@ def convert_to_raw(ctx: Context) -> Path:
     resulting raw file gets copied over to the server. See DECISIONS.md.
     """
     ct = ctx.settings.client_template
-    raw_path = raw_image_path(ctx)
+    raw_path = raw_image_path(ctx, image_name)
     ctx.runner.mkdir(raw_path.parent)
     ctx.runner.run(
         ["qemu-img", "convert", "-O", "raw", str(ct.disk_path), str(raw_path)]
@@ -147,28 +166,80 @@ def import_raw_image(ctx: Context, source: Path) -> Path:
     return dest
 
 
-def run_ltsp_image(ctx: Context) -> None:
+def dated_image_name(ctx: Context) -> str:
+    """The name this build's squashfs/kernel/initrd get published under.
+
+    Appends today's date to ``client_template.image_name`` (Todd's call,
+    2026-08-19) so the currently published version is obvious at a glance
+    under ``/srv/ltsp/images`` and ``/srv/tftp/ltsp`` -- matching this
+    server's own pre-existing convention from before this tool existed
+    (``mint-22.2-xfce-2026-04-23`` and friends).
+
+    This only changes what the build is *called*; it doesn't revisit the
+    "serve only one image, ever" rule below. ``DEFAULT_IMAGE`` in
+    ``ltsp.conf`` is still the only thing that decides what clients actually
+    netboot, so older dated builds are simply inert once superseded. But
+    nothing prunes them automatically, so they'll accumulate on disk until
+    something (a human, or the deferred overnight-rebuild cron job) cleans
+    them up. See DECISIONS.md.
+
+    If today's plain name is already published, appends ``-2``, ``-3``, ...
+    (Todd, 2026-08-20: a same-day rebuild while iterating on the template is
+    real and expected, and silently overwriting the day's earlier build via
+    ``--backup 0`` would quietly remove the exact fallback the date-based
+    naming exists to provide.) Only checked on a real run -- a dry run can't
+    reliably read ``/srv/ltsp/images`` (root-owned ``0700``) without root,
+    and failing a preview over that isn't worth it; the real run is the one
+    that has to get uniqueness right.
+    """
+    base = f"{ctx.settings.client_template.image_name}-{date.today():%Y-%m-%d}"
+    if ctx.runner.dry_run:
+        return base
+    published = set(list_published_images(ctx))
+    if base not in published:
+        return base
+    n = 2
+    while f"{base}-{n}" in published:
+        n += 1
+    return f"{base}-{n}"
+
+
+def run_ltsp_image(ctx: Context, image_name: str | None = None) -> str:
     """Build the squashfs from the raw source image, then clean it up.
 
     Must run wherever ``ltsp`` is actually installed -- the server, not
-    necessarily wherever ``convert_to_raw`` ran.
+    necessarily wherever ``convert_to_raw`` ran. ``image_name`` must match
+    whatever name the raw source was actually written under (see
+    ``raw_image_path``) -- ``ltsp image`` finds its source by that same
+    name, so a mismatch here fails with "Image does not exist" rather than
+    building from the wrong file. Defaults to ``dated_image_name`` for the
+    single-machine production path; the lab's cross-machine workflow passes
+    nothing so it falls back to the static configured name, matching
+    whatever ``convert_to_raw``/``import_raw_image`` used.
 
     ``--backup=0``: Todd's operational rule (confirmed 2026-08-19) is to
-    only ever serve one image. Students don't pick from a boot menu, so a
-    second image sitting in the images directory (``ltsp image``'s default
-    is to keep the previous one as ``<name>.img.old``) is just a way for
-    some clients to end up booting a stale version by accident.
+    only ever serve one image *under a given name*. Since the name is now
+    dated (see ``dated_image_name``), this mostly guards against leaving
+    ``<name>.img.old`` cruft behind if a build is re-run after a same-day
+    failure -- the real "only one image is live" guarantee still comes from
+    ``DEFAULT_IMAGE`` in ``ltsp.conf`` naming exactly one of them.
+
+    Returns:
+        The name this build was published under, so the caller can report
+        it (and pass it to ``set_default_image`` once it's been tested).
     """
-    ct = ctx.settings.client_template
-    ctx.runner.run(["ltsp", "image", "--backup", "0", ct.image_name])
+    name = image_name or dated_image_name(ctx)
+    raw_path = raw_image_path(ctx, name)
+    ctx.runner.run(["ltsp", "image", "--backup", "0", name])
     # Runner.remove() only prints when the path already exists on disk,
     # which the raw file never does in a dry run (the convert is faked
     # there). Use `rm -f` directly so the cleanup step still shows up when
     # reviewing a plan with --debug.
-    ctx.runner.run(["rm", "-f", str(raw_image_path(ctx))])
+    ctx.runner.run(["rm", "-f", str(raw_path)])
+    return name
 
 
-def build_image(ctx: Context) -> None:
+def build_image(ctx: Context) -> str:
     """Shut the template down and rebuild the client netboot image.
 
     Re-runnable on demand, and the one function a future cron job would
@@ -176,6 +247,12 @@ def build_image(ctx: Context) -> None:
     exists (deliberately not built yet). Assumes the template and ``ltsp``
     are on the same machine -- true in production, not in the lab (see
     ``convert_to_raw``/``run_ltsp_image``).
+
+    Deliberately does *not* update ``DEFAULT_IMAGE`` -- a fresh build isn't
+    live until ``set_default_image`` says so, so it can be tested first.
+
+    Returns:
+        The name this build was published under.
     """
     ct = ctx.settings.client_template
     lv = _libvirt(ctx)
@@ -185,9 +262,101 @@ def build_image(ctx: Context) -> None:
             "Create one first with:  ltsp-setup image create-template --no-debug"
         )
 
+    name = dated_image_name(ctx)
     shutdown_client_template(ctx)
-    convert_to_raw(ctx)
-    run_ltsp_image(ctx)
+    convert_to_raw(ctx, name)
+    return run_ltsp_image(ctx, name)
+
+
+_DEFAULT_IMAGE_LINE = re.compile(r"^(\s*)DEFAULT_IMAGE\s*=.*$", re.MULTILINE)
+
+
+def _with_default_image(content: str, image_name: str) -> str:
+    """Return ``ltsp.conf``'s content with ``DEFAULT_IMAGE`` set in ``[server]``.
+
+    Patches just that one line -- or inserts it right after the ``[server]``
+    header if it's missing -- and leaves everything else untouched. Unlike
+    ``server.configure_ltsp``, which renders the whole file from a minimal
+    template, this is safe to run against a server whose ``ltsp.conf`` has
+    real hand-written content (NFS options, per-client sections, ...) that
+    predates this tool and isn't reflected in ``data/ltsp.conf``.
+    """
+    new_line = f'DEFAULT_IMAGE="{image_name}"'
+    lines = content.splitlines()
+    section = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1]
+            continue
+        if section == "server" and _DEFAULT_IMAGE_LINE.match(line):
+            lines[i] = new_line
+            return "\n".join(lines) + "\n"
+    for i, line in enumerate(lines):
+        if line.strip() == "[server]":
+            lines.insert(i + 1, new_line)
+            return "\n".join(lines) + "\n"
+    raise StepFailed(
+        f"{LTSP_CONF} has no [server] section to add DEFAULT_IMAGE to. "
+        "Add one by hand first."
+    )
+
+
+def current_default_image(ctx: Context) -> str | None:
+    """Whatever ``DEFAULT_IMAGE`` in ``ltsp.conf`` currently names, if any."""
+    if not LTSP_CONF.is_file():
+        return None
+    match = _DEFAULT_IMAGE_LINE.search(ctx.runner.read_text(LTSP_CONF))
+    if match is None:
+        return None
+    return match.group(0).split("=", 1)[1].strip().strip('"')
+
+
+def set_default_image(ctx: Context, image_name: str) -> None:
+    """Point ``DEFAULT_IMAGE`` at ``image_name`` and regenerate the iPXE menu.
+
+    This is what actually makes a build live -- ``image build`` only
+    publishes it. Also what a revert is: call this again with a previous,
+    still-on-disk dated build's name. Only ``ltsp ipxe`` needs to re-run
+    (it's what reads ``DEFAULT_IMAGE`` to generate the boot menu); the
+    per-image kernel/initrd were already produced by ``ltsp image`` itself
+    when that build ran.
+    """
+    if not ctx.runner.dry_run and not LTSP_CONF.is_file():
+        raise StepFailed(
+            f"{LTSP_CONF} does not exist yet. Run the server's `ltsp` stage "
+            "first, or create it by hand with a [server] section."
+        )
+    current = ctx.runner.read_text(LTSP_CONF) if LTSP_CONF.is_file() else "[server]\n"
+    ctx.runner.write(LTSP_CONF, _with_default_image(current, image_name), mode=0o660)
+    ctx.runner.run(["ltsp", "ipxe"])
+
+
+def list_published_images(ctx: Context) -> list[str]:
+    """Every image ``ltsp image`` has published under ``/srv/ltsp/images``.
+
+    Newest first, so a revert target is easy to spot. Doesn't touch the
+    transient raw source (``raw_image_path``), which lives directly under
+    ``/srv/ltsp``, not ``/srv/ltsp/images``, and never survives a build.
+
+    Raises:
+        StepFailed: if the directory exists but can't be read. It's
+            root-owned ``0700`` on a real server, so this needs root.
+            Deliberately not just ``Path.glob``, which swallows
+            ``PermissionError`` internally and would silently report an
+            empty list here -- indistinguishable from "nothing published
+            yet" and actively misleading.
+    """
+    if not PUBLISHED_IMAGE_DIR.is_dir():
+        return []
+    try:
+        names = [p.stem for p in PUBLISHED_IMAGE_DIR.iterdir() if p.suffix == ".img"]
+    except PermissionError as exc:
+        raise StepFailed(
+            f"Can't read {PUBLISHED_IMAGE_DIR} ({exc}). "
+            "Try: sudo ltsp-setup image list"
+        ) from exc
+    return sorted(names, reverse=True)
 
 
 def status(ctx: Context) -> str:
