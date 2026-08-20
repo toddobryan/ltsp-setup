@@ -1,0 +1,9 @@
+[org/cinnamon/desktop/interface]
+clock-show-date=true
+clock-show-seconds=true
+clock-use-24h=false
+
+[org/gnome/desktop/interface]
+clock-show-date=true
+clock-show-seconds=true
+clock-format='12h'

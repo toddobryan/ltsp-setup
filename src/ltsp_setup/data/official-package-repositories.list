@@ -1,3 +1,4 @@
+# Managed by ltsp-setup. Local edits will be overwritten.
 deb $MINT_MIRROR $MINT_VERSION $MINT_REPOS
 
 deb $UBUNTU_MIRROR $UBUNTU_VERSION $UBUNTU_REPOS

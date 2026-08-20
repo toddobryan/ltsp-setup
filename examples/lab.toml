@@ -1,0 +1,23 @@
+# Settings for the two test VMs.
+#
+# Use this on the VMs, not on the real server:
+#   sudo ltsp-setup server start --config /home/sysadmin/lab.toml --no-debug
+
+admin_user = "sysadmin"
+
+[networking]
+hostname = "200-231-server.dupontmanual.org"
+alt_hostnames = ["200-231-server"]
+
+# The names we want the interfaces to end up with.
+nic_for_internet = "enp1s0"
+nic_for_ltsp = "enp2s0"
+
+# The MACs the lab assigns to the server VM's two NICs. Because netplan
+# matches on these and renames the interface, it does not matter which PCI
+# slot each card lands in - the LTSP-side NIC is always the LTSP-side NIC.
+mac_for_internet = "52:54:00:67:00:01"
+mac_for_ltsp = "52:54:00:67:00:02"
+
+ltsp_address = "192.168.67.1"
+ltsp_prefix = 24

@@ -1,0 +1,13 @@
+<network>
+  <name>$NAME</name>
+  <bridge name='$BRIDGE' stp='on' delay='0'/>
+  <!--
+    Deliberately no <forward/> and no <ip/>.
+
+    No <forward/> makes this an isolated layer-2 switch: the only things on it
+    are the VMs we attach. No <ip/> means libvirt runs no dnsmasq here, so the
+    LTSP server is the only DHCP server the clients can hear. Both matter -
+    a second DHCP server on this segment is the classic reason PXE boot fails
+    intermittently and maddeningly.
+  -->
+</network>

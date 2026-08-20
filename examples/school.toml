@@ -1,0 +1,30 @@
+# Settings for the real server in room 200-231.
+#
+# Fill in the two MAC addresses before using this. On the server, run:
+#   ip -br link
+# and copy the MAC of the NIC patched into the school network, then the MAC
+# of the NIC patched into the classroom switch.
+
+admin_user = "sysadmin"
+
+[networking]
+hostname = "200-231-server.dupontmanual.org"
+alt_hostnames = ["200-231-server"]
+
+nic_for_internet = "eno1"
+nic_for_ltsp = "eno2"
+
+# mac_for_internet = "xx:xx:xx:xx:xx:xx"
+# mac_for_ltsp = "xx:xx:xx:xx:xx:xx"
+
+# Extra ports on the card that should be defined but stay down.
+# nics_disabled = ["eno3", "eno4"]
+
+ltsp_address = "192.168.67.1"
+ltsp_prefix = 24
+
+[apps]
+# "ppa" tracks ppa:plt/racket and upgrades with the system (currently 9.1).
+# "upstream" fetches the newest release from racket-lang.org at install time.
+racket_source = "ppa"
+java_package = "openjdk-17-jdk"

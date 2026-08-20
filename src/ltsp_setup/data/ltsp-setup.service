@@ -1,0 +1,15 @@
+[Unit]
+Description=$DESCRIPTION
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$EXEC
+RemainAfterExit=no
+TimeoutStartSec=infinity
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
