@@ -10,3 +10,6 @@ build/
 venv/
 ltsp-setup.toml
 *.qcow2
+
+# Real student data (names, DOB, school IDs, emails) -- never committed.
+src/ltsp_setup/data/accounts-*.csv

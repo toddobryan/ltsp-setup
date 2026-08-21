@@ -25,21 +25,51 @@ Most of this kind of setting is applied by `steps/common.py::configure_dconf`
       repeatedly. Root cause is `pamltsp` missing the PAM `password` phase
       — same underlying issue as the `passwd`-does-nothing bug, real fix is
       SSSD. See `docs/DECISIONS.md`.
+- [ ] **DrRacket as the default app for `.rkt` files.** Currently whatever
+      Thunar/xdg-mime falls back to. Needs a MIME/xdg-mime default
+      association (`.desktop` file is `drracket.desktop`, confirmed present
+      — see the panel-launchers work above) rather than an extension-only
+      association, since Linux file-type handling goes through MIME types.
+      Exact MIME type for `.rkt` not yet confirmed (Racket may not register
+      one via `shared-mime-info`; may need adding one).
+- [ ] **DrRacket: highlight untested/uncovered code for the teaching
+      languages** (`#lang htdp-bsl` and the rest of the HtDP family —
+      htdp-bsl+, htdp-isl, htdp-isl+, htdp-asl presumably). This is a
+      DrRacket preference, not an OS setting — need to find where DrRacket
+      actually stores its preferences (likely under
+      `~/.local/share/racket/` or similar, format not yet confirmed) before
+      it can be set as a system-wide default the way `dconf`/`xfconf`
+      defaults work for the desktop.
+- [ ] **DrRacket: default parenthesis-coloring to "Spring."** Same
+      preferences-file question as above — likely the same file/mechanism
+      as the untested-code-highlighting setting, worth investigating both
+      together.
+- [ ] **VS Code: install a standard set of extensions globally**, so every
+      student has them without needing marketplace/internet access
+      individually. Two open questions: which extensions (not yet
+      specified — depends on what's actually taught), and the mechanism
+      for a genuinely *global* install rather than per-user (VS Code
+      normally installs extensions into `~/.vscode/extensions`; needs
+      research into a shared/system-wide extensions directory or baking
+      them into the image at build time).
 
 ## Done
 
-- [x] **Bottom-dock panel launchers: Thunar, Chrome, DrRacket, Terminal**
-      (2026-08-20). Replaced the previous set (terminal, file-manager,
-      web-browser, appfinder) with these four, in this order, referencing
-      each app's own `.desktop` file directly (`thunar.desktop`,
-      `google-chrome.desktop`, `drracket.desktop`,
-      `xfce4-terminal-emulator.desktop`) rather than Mint's generic
-      `xfce4-web-browser.desktop`/`xfce4-file-manager.desktop` aliases, so
-      it's not dependent on whatever's currently set as the system default.
-      `data/xfce4-panel-default.xml`, tested in `test_desktop.py`.
-- [x] **Panel clock shows seconds** (2026-08-20), so a frozen/dead client is
-      easy to spot at a glance. `digital-format="%a %I:%M:%S %p"` on the
-      clock plugin in the same file.
+- [x] **Single bottom panel with launchers: Thunar, Chrome, DrRacket,
+      Terminal** — **confirmed working 2026-08-21** against a genuinely
+      fresh login (wiped `/home/student`, real PXE boot on the production
+      bridge, `mint-22.3-xfce-client-2026-08-21`). Template rebuilt from
+      the real stock `mint-artwork` structure (recovered via
+      `apt-get install --reinstall mint-artwork` after it had been
+      overwritten during the first attempt) — single panel, not the
+      earlier split top/bottom layout. Launchers reference each app's own
+      `.desktop` file directly (`thunar.desktop`, `google-chrome.desktop`,
+      `drracket.desktop`, `xfce4-terminal.desktop`) rather than a Mint
+      alias. `data/xfce4-panel-default.xml`, tested in `test_desktop.py`.
+- [x] **Panel clock shows seconds** — confirmed 2026-08-21 alongside the
+      above. Real property is `digital-time-format` (not `digital-format`,
+      which silently does nothing on the actual clock plugin), set to
+      `%H:%M:%S` on the same clock plugin.
 
 Note: this system default only applies to sessions that have never
 initialized their own panel config. An already-logged-in account (like
@@ -60,5 +90,21 @@ writes the same content to that path *and* the standard xfconf
 system-wide-default location (`/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml`,
 found completely empty on this machine) as well as the original file — the
 exact chain Mint uses between them wasn't fully traced, so this covers all
-three rather than picking one. **Rebuilding the image now; not confirmed
-working against a real fresh login yet.**
+three rather than picking one.
+
+**Second correction (2026-08-21):** the first fix above worked — Mint's
+panel content stopped winning — but revealed the underlying template itself
+was wrong. `data/xfce4-panel-default.xml` had a split top-bar +
+auto-hide-bottom-dock layout that predates this whole effort (from
+2026-08-19, believed at the time to be "stock Mint," never actually
+verified against a real fresh login). A real fresh login showed exactly
+that split layout, which Todd didn't want. `apt-get install --reinstall
+mint-artwork` recovered the real, unmodified stock file (single bottom
+panel, `whiskermenu`/`showdesktop`/launchers/`tasklist`/systray/clock all
+together) — the template has been rebuilt from that real structure instead
+of the old split-panel one, keeping only the launcher and clock changes.
+Also corrected: the clock plugin's real property is
+`digital-time-format`, not `digital-format` (which doesn't exist and was
+silently ignored), and the terminal launcher is `xfce4-terminal.desktop`,
+not the `xfce4-terminal-emulator.desktop` alias. **Rebuilding the image
+now; not confirmed working against a real fresh login yet.**

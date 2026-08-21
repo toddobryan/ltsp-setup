@@ -56,7 +56,7 @@ def test_panel_defaults_has_the_four_dock_launchers_in_order(
         "thunar.desktop",
         "google-chrome.desktop",
         "drracket.desktop",
-        "xfce4-terminal-emulator.desktop",
+        "xfce4-terminal.desktop",
     ]
     positions = [record.message.index(name) for name in launchers]
     assert positions == sorted(positions)
