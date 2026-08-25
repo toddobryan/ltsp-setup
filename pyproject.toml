@@ -7,6 +7,14 @@ readme = "README.md"
 requires-python = ">=3.12,<4.0"
 dependencies = ["typer (>=0.17.4,<0.18.0)", "rich (>=14.1.0,<15.0.0)", "pyyaml (>=6.0,<7.0)"]
 
+[project.optional-dependencies]
+dev = [
+    "black (>=25.1.0,<26.0.0)",
+    "mypy (>=1.17.1,<2.0.0)",
+    "pytest (>=8.3.0,<9.0.0)",
+    "types-pyyaml (>=6.0.12.20260815,<7.0.0.0)",
+]
+
 [project.scripts]
 ltsp-setup = "ltsp_setup.main:main"
 
@@ -17,12 +25,6 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 packages = [{ include = "ltsp_setup", from = "src" }]
 include = [{ path = "src/ltsp_setup/data/*", format = ["sdist", "wheel"] }]
-
-[tool.poetry.group.dev.dependencies]
-black = "^25.1.0"
-mypy = "^1.17.1"
-pytest = "^8.3.0"
-types-pyyaml = "^6.0.12.20260815"
 
 [tool.mypy]
 python_version = "3.12"

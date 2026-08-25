@@ -28,10 +28,13 @@ the previous implementation, and the one significant feature still missing
 
 ## Checks
 
+Dependencies live in a project-local venv (`python3 -m venv .venv`, then
+`.venv/bin/pip install -e ".[dev]"`).
+
 ```bash
-poetry run pytest
-poetry run mypy
-poetry run black src tests
+.venv/bin/pytest
+.venv/bin/mypy
+.venv/bin/black src tests
 ```
 
 All three must be clean. mypy runs in strict mode.
