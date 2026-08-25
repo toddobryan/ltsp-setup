@@ -7,9 +7,12 @@ are, what's verified), this is just a working checklist — add to it freely,
 check items off as they're fixed and confirmed, delete items that turn out
 not to matter.
 
-Most of this kind of setting is applied by `steps/common.py::configure_dconf`
-/ `configure_panel_defaults` / `configure_autostart`, run as part of the
-`client` plan's `desktop` stage.
+System-wide settings (same for every account) are applied by
+`steps/common.py::configure_dconf` / `configure_autostart` /
+`configure_racket_mime`, run as part of the `desktop` stage. Per-student
+settings (panel, keyboard layout, DrRacket prefs) go through
+`steps/students.py::configure_skel`/`apply_defaults`/`reset_defaults`
+instead — see `docs/DECISIONS.md`, "Student default configuration".
 
 ## Open
 
@@ -25,25 +28,20 @@ Most of this kind of setting is applied by `steps/common.py::configure_dconf`
       repeatedly. Root cause is `pamltsp` missing the PAM `password` phase
       — same underlying issue as the `passwd`-does-nothing bug, real fix is
       SSSD. See `docs/DECISIONS.md`.
-- [ ] **DrRacket as the default app for `.rkt` files.** Currently whatever
-      Thunar/xdg-mime falls back to. Needs a MIME/xdg-mime default
-      association (`.desktop` file is `drracket.desktop`, confirmed present
-      — see the panel-launchers work above) rather than an extension-only
-      association, since Linux file-type handling goes through MIME types.
-      Exact MIME type for `.rkt` not yet confirmed (Racket may not register
-      one via `shared-mime-info`; may need adding one).
 - [ ] **DrRacket: highlight untested/uncovered code for the teaching
-      languages** (`#lang htdp-bsl` and the rest of the HtDP family —
-      htdp-bsl+, htdp-isl, htdp-isl+, htdp-asl presumably). This is a
-      DrRacket preference, not an OS setting — need to find where DrRacket
-      actually stores its preferences (likely under
-      `~/.local/share/racket/` or similar, format not yet confirmed) before
-      it can be set as a system-wide default the way `dconf`/`xfconf`
-      defaults work for the desktop.
-- [ ] **DrRacket: default parenthesis-coloring to "Spring."** Same
-      preferences-file question as above — likely the same file/mechanism
-      as the untested-code-highlighting setting, worth investigating both
-      together.
+      languages** (`#lang htdp/bsl` and the rest of the HtDP family —
+      htdp-bsl+, htdp-isl, htdp-isl+, htdp-asl presumably). Still doesn't
+      highlight untested code with `#lang htdp/bsl` as of 2026-08-25, even
+      after setting preferences in DrRacket's own dialog — the language-level
+      settings vector (`plt:framework-pref:drracket:language-settings`,
+      6-element vector's last slot) captured from the student account's
+      session reads `debug`, not something coverage-related, so whatever
+      controls test-coverage highlighting either lives elsewhere in that
+      vector or isn't exposed through the languages dialog at all. Needs
+      more digging into what that vector's fields actually mean (see
+      `racket-prefs-default.rktd` — worth diffing against what a coverage-
+      enabled setup produces once found) before it can be fixed and
+      defaulted for every student.
 - [ ] **VS Code: install a standard set of extensions globally**, so every
       student has them without needing marketplace/internet access
       individually. Two open questions: which extensions (not yet
@@ -55,21 +53,72 @@ Most of this kind of setting is applied by `steps/common.py::configure_dconf`
 
 ## Done
 
-- [x] **Single bottom panel with launchers: Thunar, Chrome, DrRacket,
-      Terminal** — **confirmed working 2026-08-21** against a genuinely
-      fresh login (wiped `/home/student`, real PXE boot on the production
-      bridge, `mint-22.3-xfce-client-2026-08-21`). Template rebuilt from
-      the real stock `mint-artwork` structure (recovered via
+- [x] **Keyboard layout switcher (Dvorak).** Todd uses Dvorak; students get
+      standard US qwerty by default with a one-click switch via the `xkb`
+      panel plugin (id `16`, right of the expanding separator, left of the
+      systray — `xfce4-xkb-plugin` is already part of stock Mint XFCE, no
+      new package needed). Lives in `data/keyboard-layout-default.xml`,
+      written only to the standard system-wide xfconf-default path — no
+      `mint-artwork` override exists for this channel (checked directly via
+      `dpkg -L`, unlike the panel).
+
+      **Correction (2026-08-24):** the first variant, `alt-intl`, was wrong
+      — it puts `dead_acute`/`dead_diaeresis` on the *base* level of the
+      quote/apostrophe key (confirmed by reading
+      `/usr/share/X11/xkb/symbols/us` directly), so a plain `"` silently
+      became a dead key waiting for a second keystroke instead of typing a
+      quote. Switched to `altgr-intl`, which keeps the literal character on
+      the base level and puts the dead key behind AltGr (Right-Alt+`"` for
+      an umlaut, plain `"` for a quote) — the Dvorak variant didn't need to
+      change, since plain `us(dvorak)` already had it right for that key.
+      Also dropped the `compose:ralt` XkbOption, which was fighting with
+      AltGr for the same physical key. Todd tested both layouts live and
+      confirmed correct 2026-08-24; config captured verbatim from his
+      tested session rather than re-derived.
+
+      **Correction (2026-08-25):** the `alt-intl`/`altgr-intl` fix above was
+      necessary but not sufficient — a genuinely fresh skel-provisioned
+      account still showed only one layout, nothing to switch to. Root
+      cause: `XkbLayout` in the template was `type="empty"` (no value at
+      all), while `XkbVariant` had two comma-separated entries — the plugin
+      needs a matching two-item `XkbLayout` (`us,us`) to have two groups to
+      cycle between. Fixed and confirmed working against a fresh account by
+      Todd.
+
+- [x] **Single bottom panel with launchers: Thunar, Chrome, DrRacket, VS
+      Code, Terminal** — **confirmed working 2026-08-21** against a
+      genuinely fresh login (wiped `/home/student`, real PXE boot on the
+      production bridge, `mint-22.3-xfce-client-2026-08-21`). Template
+      rebuilt from the real stock `mint-artwork` structure (recovered via
       `apt-get install --reinstall mint-artwork` after it had been
       overwritten during the first attempt) — single panel, not the
       earlier split top/bottom layout. Launchers reference each app's own
       `.desktop` file directly (`thunar.desktop`, `google-chrome.desktop`,
-      `drracket.desktop`, `xfce4-terminal.desktop`) rather than a Mint
-      alias. `data/xfce4-panel-default.xml`, tested in `test_desktop.py`.
+      `drracket.desktop`, `code.desktop`, `xfce4-terminal.desktop`) rather
+      than a Mint alias. `data/xfce4-panel-default.xml`, tested in
+      `test_students.py`. VS Code launcher added 2026-08-25, positioned
+      after DrRacket and before the terminal to match Todd's live edit.
 - [x] **Panel clock shows seconds** — confirmed 2026-08-21 alongside the
       above. Real property is `digital-time-format` (not `digital-format`,
       which silently does nothing on the actual clock plugin), set to
       `%H:%M:%S` on the same clock plugin.
+- [x] **DrRacket as the default app for `.rkt` files** (2026-08-25).
+      `application/x-racket` is a real registered MIME type
+      (`/usr/share/mime/packages/racket.xml` — already shipped, not
+      Racket's own doing), so this only needed a default-app mapping:
+      `steps/common.py::configure_racket_mime` writes that MIME type plus
+      `/etc/xdg/mimeapps.list` (`application/x-racket=drracket.desktop`).
+      System-wide, not per-student, since which app opens a `.rkt` file
+      isn't something a student should need to customize — requires an
+      image rebuild to reach clients.
+- [x] **DrRacket: default parenthesis-coloring to "Spring"** (2026-08-25).
+      Preferences live in `~/.config/racket/racket-prefs.rktd`, a flat
+      Racket association list — `framework:paren-color-scheme` is the key.
+      Per-student, via `/etc/skel` like the panel/keyboard defaults
+      (`steps/students.py`, `data/racket-prefs-default.rktd`), with the
+      same kind of property-level three-way merge as the xfconf files
+      (`steps/racket_prefs.py`) so a later default change doesn't get
+      blocked by an unrelated student customization, or vice versa.
 
 Note: this system default only applies to sessions that have never
 initialized their own panel config. An already-logged-in account (like

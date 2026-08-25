@@ -21,9 +21,11 @@
         <value type="int" value="3"/>
         <value type="int" value="4"/>
         <value type="int" value="5"/>
+        <value type="int" value="11"/>
         <value type="int" value="15"/>
         <value type="int" value="6"/>
         <value type="int" value="7"/>
+        <value type="int" value="16"/>
         <value type="int" value="8"/>
         <value type="int" value="9"/>
         <value type="int" value="10"/>
@@ -50,6 +52,11 @@
         <value type="string" value="drracket.desktop"/>
       </property>
     </property>
+    <property name="plugin-11" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="code.desktop"/>
+      </property>
+    </property>
     <property name="plugin-15" type="string" value="launcher">
       <property name="items" type="array">
         <value type="string" value="xfce4-terminal.desktop"/>
@@ -63,6 +70,11 @@
       <property name="expand" type="bool" value="true"/>
       <property name="style" type="uint" value="0"/>
     </property>
+    <property name="plugin-16" type="string" value="xkb">
+      <property name="display-type" type="uint" value="2"/>
+      <property name="display-name" type="uint" value="1"/>
+      <property name="group-policy" type="uint" value="0"/>
+    </property>
     <property name="plugin-8" type="string" value="systray">
       <property name="icon-size" type="int" value="20"/>
       <property name="names-visible" type="array">
@@ -74,7 +86,7 @@
     <property name="plugin-10" type="string" value="xapp-status-plugin"/>
     <!-- plugin-11 (power-manager-plugin) deliberately omitted: students have
          no sudo to act on power settings, so it's just confusing clutter.
-         See steps/common.py::configure_panel_defaults. -->
+         See steps/students.py::configure_skel/apply_defaults/reset_defaults. -->
     <property name="plugin-12" type="string" value="pulseaudio">
       <property name="enable-keyboard-shortcuts" type="bool" value="true"/>
       <property name="enable-mpris" type="bool" value="true"/>

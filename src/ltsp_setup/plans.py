@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ltsp_setup.stages import Context, Plan, Stage
-from ltsp_setup.steps import apps, client, common, server
+from ltsp_setup.steps import apps, client, common, server, students
 
 
 def _server_networking(ctx: Context) -> None:
@@ -42,8 +42,12 @@ def _client_ltsp(ctx: Context) -> None:
 
 def _desktop(ctx: Context) -> None:
     common.configure_dconf(ctx)
-    common.configure_panel_defaults(ctx)
     common.configure_autostart(ctx)
+    common.configure_racket_mime(ctx)
+
+
+def _skel(ctx: Context) -> None:
+    students.configure_skel(ctx)
 
 
 SERVER = Plan(
@@ -73,6 +77,11 @@ SERVER = Plan(
             _server_virt,
         ),
         Stage("desktop", "system-wide desktop defaults", _desktop, reboot_after=True),
+        Stage(
+            "skel",
+            "point new-account creation (/etc/skel) at current student defaults",
+            _skel,
+        ),
     ],
 )
 

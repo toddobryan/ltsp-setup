@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-racket">
+    <comment>Racket Programming Language</comment>
+    <glob pattern="*.rkt"/>
+  </mime-type>
+</mime-info>

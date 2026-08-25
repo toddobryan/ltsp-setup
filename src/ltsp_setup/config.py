@@ -182,6 +182,28 @@ class ClientTemplate:
 
 
 @dataclass(frozen=True)
+class Students:
+    """Where student accounts live on the server, and how to tell them apart
+    from admin accounts.
+
+    NFS-exported to the clients, but account and settings operations run
+    here on the server itself -- see ``steps/students.py``. ``uid_min``/
+    ``uid_max`` bound the normal-user range (below it: system accounts;
+    ``nobody`` and friends sit at 65534 and above on Debian/Ubuntu, hence
+    60000 rather than the UINT_MAX default some distros use).
+    ``protected_usernames`` are real accounts inside that range that are
+    never students -- always unioned with ``Settings.admin_user``, so a
+    config mistake can't accidentally make the admin account eligible for
+    bulk student operations.
+    """
+
+    home_root: Path = field(default_factory=lambda: Path("/home"))
+    uid_min: int = 1000
+    uid_max: int = 60000
+    protected_usernames: tuple[str, ...] = ("toddobryan", "student")
+
+
+@dataclass(frozen=True)
 class Settings:
     """Everything the setup commands need to know."""
 
@@ -191,6 +213,7 @@ class Settings:
     apps: Apps = field(default_factory=Apps)
     lab: Lab = field(default_factory=Lab)
     client_template: ClientTemplate = field(default_factory=ClientTemplate)
+    students: Students = field(default_factory=Students)
 
 
 def _coerce(value: Any, target_type: Any) -> Any:

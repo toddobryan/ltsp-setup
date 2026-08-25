@@ -377,10 +377,14 @@ Recording these too, same reason as above.
   Whatever this account-creation feature ends up being, it should trigger
   `ltsp initrd` itself rather than leaving that as a step someone has to
   remember — a newly created account should just work on next boot.
-- **Student default configuration** — `/etc/skel`, dconf system defaults, per-app
-  config. `steps/common.py::configure_dconf` is where this goes; the dconf
-  profile and local database are already set up properly rather than being
-  poked in with one-off `gsettings` calls, specifically so this can slot in.
+- **Student default configuration.** Partly built (2026-08-24) —
+  `steps/students.py` plus `steps/xfconf.py`; see the new section below.
+  Still missing: wiring `apply_defaults` into account creation itself once
+  that's ported (it's written to be safely callable standalone against a
+  freshly-created account, so no rework needed later), and dconf/per-app
+  config beyond the two xfconf files managed today.
+  `steps/common.py::configure_dconf` is where a dconf-based version of the
+  same idea would go.
 - **Trimming the image.** The 25 GB disk overflowed, which is part of why this
   rebuild happened; the default is now 40 GB. Chrome, VS Code, the JDK and a
   full Rust toolchain are the four big items. `ltsp image` squashfs-compresses,

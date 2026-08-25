@@ -15,7 +15,7 @@ from ltsp_setup import plans, stages
 from ltsp_setup.lab.virt import Virt
 from ltsp_setup.runner import Runner, StepFailed, console
 from ltsp_setup.stages import Context
-from ltsp_setup.steps import image
+from ltsp_setup.steps import image, students
 
 LOG_FILE = Path("/var/log/ltsp-setup.log")
 
@@ -36,10 +36,15 @@ image_app = typer.Typer(
     help="Manage the client-template VM and build the netboot image.",
     no_args_is_help=True,
 )
+student_app = typer.Typer(
+    help="Manage student accounts and their desktop-setting defaults.",
+    no_args_is_help=True,
+)
 app.add_typer(server_app, name="server")
 app.add_typer(client_app, name="client")
 app.add_typer(lab_app, name="lab")
 app.add_typer(image_app, name="image")
+app.add_typer(student_app, name="student")
 
 DebugOption = Annotated[
     bool,
@@ -325,6 +330,79 @@ def image_import_raw(
     ctx = _context(debug, config)
     image.import_raw_image(ctx, Path(source))
     image.run_ltsp_image(ctx)
+
+
+# -------------------------------------------------------------- student
+
+
+@student_app.command("reset-defaults")
+def student_reset_defaults(
+    username: str, debug: DebugOption = True, config: ConfigOption = None
+) -> None:
+    """Delete a student's overrides for the panel/keyboard-layout settings.
+
+    Destructive but narrow: only the files this project manages, not the
+    rest of the account. Settings reseed from the system defaults baked
+    into the client image on the student's next login.
+    """
+    _require_root(debug)
+    students.reset_defaults(_context(debug, config), username)
+
+
+def _report_applied(username: str, result: students.AppliedResult) -> None:
+    for rel in result.applied:
+        console.print(f"  [green]applied[/green] {username}: {rel}")
+    for rel, reason in result.skipped:
+        console.print(f"  [yellow]skipped[/yellow] {username}: {rel} ({reason})")
+
+
+@student_app.command("apply-defaults")
+def student_apply_defaults(
+    username: str, debug: DebugOption = True, config: ConfigOption = None
+) -> None:
+    """Write current defaults into one account, patching only the
+    properties that are missing or unchanged since we last shipped them.
+
+    Compares each managed setting against a snapshot of the template as it
+    stood the last time this ran: unchanged since then -> updated to the
+    current default; changed, or no record at all -> left alone. Patches
+    at the individual-property level, not whole-file, so a student
+    changing one setting doesn't block an unrelated fix elsewhere in the
+    same file.
+    """
+    _require_root(debug)
+    result = students.apply_defaults(_context(debug, config), username)
+    _report_applied(username, result)
+
+
+@student_app.command("apply-defaults-all")
+def student_apply_defaults_all(
+    debug: DebugOption = True, config: ConfigOption = None
+) -> None:
+    """Run apply-defaults across every real student account."""
+    _require_root(debug)
+    ctx = _context(debug, config)
+    for username, result in students.apply_defaults_all(ctx).items():
+        _report_applied(username, result)
+
+
+@student_app.command("remove-stale")
+def student_remove_stale(
+    debug: DebugOption = True, config: ConfigOption = None
+) -> None:
+    """Delete every real student account and its entire home directory.
+
+    Destructive and NOT narrow -- this removes real content, not just
+    settings. Every account is announced with its file count before it's
+    touched, in both a dry run and a real one, so check that output
+    carefully before re-running with --no-debug.
+    """
+    _require_root(debug)
+    names = students.remove_all(_context(debug, config))
+    if not names:
+        console.print("No student accounts to remove.")
+        return
+    console.print(f"[bold]{len(names)} account(s):[/bold] {', '.join(names)}")
 
 
 # ---------------------------------------------------------------- config

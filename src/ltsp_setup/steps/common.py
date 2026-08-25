@@ -10,27 +10,9 @@ from ltsp_setup.stages import Context
 SOURCES_LIST = Path("/etc/apt/sources.list.d/official-package-repositories.list")
 DCONF_PROFILE = Path("/etc/dconf/profile/user")
 DCONF_LOCAL_DIR = Path("/etc/dconf/db/local.d")
-
-# Three places a fresh XFCE session's panel layout could plausibly come
-# from on Linux Mint, discovered by testing a real login rather than
-# assuming (2026-08-20): a genuinely new student account (via a wiped
-# /home/student) still showed Mint's stock panel -- Firefox launcher and
-# all -- after writing only the standard XDG panel bootstrap file below.
-# `/usr/share/mint-artwork/.../xfce4-panel.xml` is confirmed to contain
-# that same Firefox reference and is Mint's own XFCE-specific override
-# source; the standard system-wide xfconf-default path was confirmed
-# completely empty on this machine. Writing to all three, rather than just
-# the one that *should* be authoritative per upstream XFCE docs, since the
-# exact copy mechanism Mint uses between them wasn't fully traced -- this
-# needs to be confirmed against an actual fresh login, not assumed.
-PANEL_DEFAULT = Path("/etc/xdg/xfce4/panel/default.xml")
-PANEL_XFCONF_SYSTEM_DEFAULT = Path(
-    "/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
-)
-PANEL_MINT_ARTWORK_SOURCE = Path(
-    "/usr/share/mint-artwork/xfce/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
-)
 AUTOSTART_DIR = Path("/etc/xdg/autostart")
+MIME_DIR = Path("/usr/share/mime")
+MIMEAPPS_LIST = Path("/etc/xdg/mimeapps.list")
 
 # Autostart entries hidden for students: they have no privilege to act on
 # any of them, so showing the icon/nag is just confusing clutter (Todd,
@@ -125,9 +107,10 @@ def install_prerequisites(ctx: Context) -> None:
 def configure_dconf(ctx: Context) -> None:
     """Set system-wide desktop defaults.
 
-    Right now this is only the clock format.  Student defaults will land here
-    too, which is why the profile and the local database are set up properly
-    rather than being poked in as one-off gsettings calls.
+    Right now this is only the clock format -- system-wide, not per-student
+    (see steps/students.py::configure_skel for per-student defaults, which
+    go through /etc/skel instead since dconf's own system database applies
+    the same values to every account regardless).
     """
     ctx.runner.write(DCONF_PROFILE, templates.read("dconf-profile-user"))
     ctx.runner.mkdir(DCONF_LOCAL_DIR)
@@ -137,27 +120,23 @@ def configure_dconf(ctx: Context) -> None:
     ctx.runner.run(["dconf", "update"])
 
 
-def configure_panel_defaults(ctx: Context) -> None:
-    """Replace the system panel default with the school's version.
-
-    Verified against a live diff of a student's own edited panel (2026-08-19)
-    rather than guessed from documentation: this is the stock Mint
-    ``default.xml`` with the ``power-manager-plugin`` (``plugin-9``) removed
-    from both its property block and panel-1's ``plugin-ids`` array.
-    Students have no sudo to act on power settings, so it was just
-    confusing clutter.
-
-    Written to all three candidate locations -- see the comment by
-    ``PANEL_DEFAULT`` above for why more than one path is involved.
-    """
-    content = templates.read("xfce4-panel-default.xml")
-    ctx.runner.write(PANEL_DEFAULT, content)
-    ctx.runner.write(PANEL_XFCONF_SYSTEM_DEFAULT, content)
-    ctx.runner.write(PANEL_MINT_ARTWORK_SOURCE, content)
-
-
 def configure_autostart(ctx: Context) -> None:
     """Hide the autostart entries students can't do anything useful with."""
     hidden = templates.read("autostart-hidden.desktop")
     for name in HIDDEN_AUTOSTART:
         ctx.runner.write(AUTOSTART_DIR / name, hidden)
+
+
+def configure_racket_mime(ctx: Context) -> None:
+    """Make .rkt files open in DrRacket by default.
+
+    System-wide, not per-student (steps/students.py) -- which app opens a
+    .rkt file isn't something a student ever needs to customize, and the
+    MIME database lives outside /home entirely, so /etc/skel can't reach it
+    anyway.
+    """
+    ctx.runner.write(
+        MIME_DIR / "packages" / "racket.xml", templates.read("racket-mime-type.xml")
+    )
+    ctx.runner.run(["update-mime-database", str(MIME_DIR)])
+    ctx.runner.write(MIMEAPPS_LIST, templates.read("mimeapps-default.list"))

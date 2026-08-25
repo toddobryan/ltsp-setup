@@ -57,3 +57,10 @@ def test_read_text_reads_for_real_even_in_a_dry_run(tmp_path: Path) -> None:
     target = tmp_path / "existing.conf"
     target.write_text("hello\n")
     assert Runner(dry_run=True).read_text(target) == "hello\n"
+
+
+def test_exists_checks_for_real_even_in_a_dry_run(tmp_path: Path) -> None:
+    target = tmp_path / "existing.conf"
+    target.write_text("hello\n")
+    assert Runner(dry_run=True).exists(target) is True
+    assert Runner(dry_run=True).exists(tmp_path / "missing.conf") is False

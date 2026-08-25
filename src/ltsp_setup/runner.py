@@ -157,6 +157,36 @@ class Runner:
         """
         return path.read_text()
 
+    def exists(self, path: Path) -> bool:
+        """True if ``path`` exists.
+
+        Always checked for real, even in a dry run -- inspection, not a
+        change, the same reasoning as :meth:`read_text`.
+        """
+        return path.exists()
+
+    def count_files(self, path: Path) -> int:
+        """How many regular files live under ``path``, recursively.
+
+        For sanity-checking a deletion before it happens -- e.g. "this
+        account I'm about to wipe holds 0 files" versus "holds 4,000" is the
+        difference between an abandoned account and one a student is still
+        using. Always checked for real, even in a dry run -- inspection,
+        not a change, the same reasoning as :meth:`read_text`. Zero if
+        ``path`` doesn't exist.
+        """
+        if not path.exists():
+            return 0
+        return sum(1 for p in path.rglob("*") if p.is_file())
+
+    def passwd_entries(self) -> list[tuple[str, int]]:
+        """Every local account as ``(username, uid)``.
+
+        Always checked for real, even in a dry run -- inspection, not a
+        change, the same reasoning as :meth:`read_text`.
+        """
+        return [(entry.pw_name, entry.pw_uid) for entry in pwd.getpwall()]
+
     def append_line(self, path: Path, line: str) -> None:
         """Append ``line`` to ``path`` unless it is already there."""
         self._show("append", f"{line!r} -> {path}")
