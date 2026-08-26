@@ -102,6 +102,12 @@ class Apps:
     rustup_home: Path = field(default_factory=lambda: Path("/usr/local/rustup"))
     cargo_home: Path = field(default_factory=lambda: Path("/usr/local/cargo"))
 
+    # Students need to record video of their running programs for the AP
+    # project (Todd, 2026-08-26) -- carried over from last year's image.
+    gimp: bool = True
+    shotcut: bool = True
+    simplescreenrecorder: bool = True
+
     extra_packages: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:

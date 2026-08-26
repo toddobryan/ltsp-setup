@@ -32,6 +32,12 @@ def install_all(ctx: Context) -> None:
         install_vscode(ctx)
     if apps.rust:
         install_rust(ctx)
+    if apps.gimp:
+        install_gimp(ctx)
+    if apps.shotcut:
+        install_shotcut(ctx)
+    if apps.simplescreenrecorder:
+        install_simplescreenrecorder(ctx)
     if apps.extra_packages:
         apt_install(ctx, list(apps.extra_packages))
 
@@ -178,3 +184,18 @@ def install_rust(ctx: Context) -> None:
         ),
         mode=0o644,
     )
+
+
+def install_gimp(ctx: Context) -> None:
+    """Install GIMP."""
+    apt_install(ctx, ["gimp"])
+
+
+def install_shotcut(ctx: Context) -> None:
+    """Install Shotcut, for the AP project's required video demos."""
+    apt_install(ctx, ["shotcut"])
+
+
+def install_simplescreenrecorder(ctx: Context) -> None:
+    """Install SimpleScreenRecorder, for the AP project's required video demos."""
+    apt_install(ctx, ["simplescreenrecorder"])
