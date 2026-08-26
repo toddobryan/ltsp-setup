@@ -13,6 +13,7 @@ DCONF_LOCAL_DIR = Path("/etc/dconf/db/local.d")
 AUTOSTART_DIR = Path("/etc/xdg/autostart")
 MIME_DIR = Path("/usr/share/mime")
 MIMEAPPS_LIST = Path("/etc/xdg/mimeapps.list")
+ICON_THEME_ROOT = Path("/usr/share/icons")
 
 # Autostart entries hidden for students: they have no privilege to act on
 # any of them, so showing the icon/nag is just confusing clutter (Todd,
@@ -128,15 +129,32 @@ def configure_autostart(ctx: Context) -> None:
 
 
 def configure_racket_mime(ctx: Context) -> None:
-    """Make .rkt files open in DrRacket by default.
+    """Make .rkt files open in DrRacket by default, with a real file icon.
 
     System-wide, not per-student (steps/students.py) -- which app opens a
     .rkt file isn't something a student ever needs to customize, and the
-    MIME database lives outside /home entirely, so /etc/skel can't reach it
-    anyway.
+    MIME database and icon themes live outside /home entirely, so
+    /etc/skel can't reach either.
+
+    The icon (data/application-x-racket.svg) is the same one already found
+    installed by hand into every icon theme on the real server -- icon
+    themes resolve a mime type's icon by name (application/x-racket ->
+    application-x-racket), and nothing here ships that icon on its own, so
+    without this a .rkt file just shows a generic file icon. Matches the
+    server's own already-working approach of dropping it into every theme's
+    scalable/mimetypes rather than relying on hicolor-fallback inheritance,
+    since that's what's actually proven to work on this desktop stack.
     """
     ctx.runner.write(
         MIME_DIR / "packages" / "racket.xml", templates.read("racket-mime-type.xml")
     )
     ctx.runner.run(["update-mime-database", str(MIME_DIR)])
     ctx.runner.write(MIMEAPPS_LIST, templates.read("mimeapps-default.list"))
+
+    icon = templates.read("application-x-racket.svg")
+    for theme_dir in ctx.runner.list_dirs(ICON_THEME_ROOT):
+        ctx.runner.write(
+            theme_dir / "scalable" / "mimetypes" / "application-x-racket.svg",
+            icon,
+            show=False,
+        )

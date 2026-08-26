@@ -64,3 +64,42 @@ def test_exists_checks_for_real_even_in_a_dry_run(tmp_path: Path) -> None:
     target.write_text("hello\n")
     assert Runner(dry_run=True).exists(target) is True
     assert Runner(dry_run=True).exists(tmp_path / "missing.conf") is False
+
+
+def test_list_dirs_returns_only_subdirectories(tmp_path: Path) -> None:
+    (tmp_path / "Theme-A").mkdir()
+    (tmp_path / "Theme-B").mkdir()
+    (tmp_path / "not-a-theme.txt").write_text("")
+    assert Runner(dry_run=True).list_dirs(tmp_path) == [
+        tmp_path / "Theme-A",
+        tmp_path / "Theme-B",
+    ]
+
+
+def test_list_dirs_is_empty_for_a_missing_path(tmp_path: Path) -> None:
+    assert Runner(dry_run=True).list_dirs(tmp_path / "missing") == []
+
+
+def test_remove_tree_dry_run_leaves_the_directory_in_place(tmp_path: Path) -> None:
+    target = tmp_path / "checkout"
+    (target / "sub").mkdir(parents=True)
+    (target / "sub" / "file.txt").write_text("hello")
+
+    Runner(dry_run=True).remove_tree(target)
+
+    assert target.is_dir()
+    assert (target / "sub" / "file.txt").exists()
+
+
+def test_remove_tree_real_run_deletes_it(tmp_path: Path) -> None:
+    target = tmp_path / "checkout"
+    (target / "sub").mkdir(parents=True)
+    (target / "sub" / "file.txt").write_text("hello")
+
+    Runner(dry_run=False).remove_tree(target)
+
+    assert not target.exists()
+
+
+def test_remove_tree_is_a_no_op_for_a_missing_path(tmp_path: Path) -> None:
+    Runner(dry_run=False).remove_tree(tmp_path / "missing")

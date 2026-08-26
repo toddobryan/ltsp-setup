@@ -8,6 +8,7 @@ via /etc/skel) -- see docs/DECISIONS.md, "Student default configuration".
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -54,3 +55,20 @@ def test_configure_racket_mime_registers_the_type_and_default_app(
     assert any(
         r.message == "run: update-mime-database /usr/share/mime" for r in caplog.records
     )
+
+
+def test_configure_racket_mime_drops_the_icon_into_every_theme(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    caplog.set_level(logging.INFO, logger="ltsp-setup")
+    ctx = Context(Settings(), Runner(dry_run=True))
+    theme_dirs = [Path("/usr/share/icons/Mint-Y"), Path("/usr/share/icons/hicolor")]
+    monkeypatch.setattr(ctx.runner, "list_dirs", lambda path: theme_dirs)
+
+    common.configure_racket_mime(ctx)
+
+    for theme_dir in theme_dirs:
+        target = theme_dir / "scalable" / "mimetypes" / "application-x-racket.svg"
+        assert any(
+            r.message.startswith(f"write {target}:") for r in caplog.records
+        ), target

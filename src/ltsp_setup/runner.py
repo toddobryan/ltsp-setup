@@ -13,6 +13,7 @@ import logging
 import os
 import pwd
 import shlex
+import shutil
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
@@ -179,6 +180,17 @@ class Runner:
             return 0
         return sum(1 for p in path.rglob("*") if p.is_file())
 
+    def list_dirs(self, path: Path) -> list[Path]:
+        """Every immediate subdirectory of ``path``.
+
+        Always checked for real, even in a dry run -- inspection, not a
+        change, the same reasoning as :meth:`read_text`. Empty if ``path``
+        doesn't exist.
+        """
+        if not path.exists():
+            return []
+        return sorted(p for p in path.iterdir() if p.is_dir())
+
     def passwd_entries(self) -> list[tuple[str, int]]:
         """Every local account as ``(username, uid)``.
 
@@ -219,6 +231,15 @@ class Runner:
             self._show("remove", str(path))
             if not self.dry_run:
                 path.unlink()
+
+    def remove_tree(self, path: Path) -> None:
+        """Recursively delete a directory.  A no-op if it doesn't exist."""
+        if not path.exists() and not path.is_symlink():
+            return
+        self._show("remove", f"{path} (recursively)")
+        logger.info("remove tree: %s", path)
+        if not self.dry_run:
+            shutil.rmtree(path)
 
     def chown(self, path: Path, user: str, group: str | None = None) -> None:
         """Change ownership of a path."""

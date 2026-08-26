@@ -15,7 +15,7 @@ from ltsp_setup import plans, stages
 from ltsp_setup.lab.virt import Virt
 from ltsp_setup.runner import Runner, StepFailed, console
 from ltsp_setup.stages import Context
-from ltsp_setup.steps import image, students
+from ltsp_setup.steps import client, image, students
 
 LOG_FILE = Path("/var/log/ltsp-setup.log")
 
@@ -175,6 +175,19 @@ def client_stage(
     _require_root(debug)
     ctx = _context(debug, config)
     plans.CLIENT.stage(name).func(ctx)
+
+
+@client_app.command("cleanup")
+def client_cleanup(debug: DebugOption = True, config: ConfigOption = None) -> None:
+    """Remove this project's own checkout and venv from the template.
+
+    Not part of the plan -- run this by hand as the last step before
+    shutting the template down, after using `client stage ...` to configure
+    it. The template's whole disk becomes the client image, so anything
+    left here ships to every real thin client.
+    """
+    _require_root(debug)
+    client.cleanup_setup_tooling(_context(debug, config))
 
 
 # ------------------------------------------------------------------- lab
