@@ -14,7 +14,7 @@
  (plt:framework-pref:external-browser google-chrome)
  (plt:framework-pref:framework:paren-color-scheme spring)
  (plt:framework-pref:drracket:recent-language-names (("Determine language from source" #6(#t print mixed-fraction-e #f #t debug) (default) #0() #f #t #t ((test) (main)) #t)))
- (plt:framework-pref:drracket:language-settings ((-32768) (#6(#t print mixed-fraction-e #f #t debug) (default) #0() #f #t #t ((test) (main)) #t)))
+ (plt:framework-pref:drracket:language-settings ((-32768) (#6(#t print mixed-fraction-e #f #t test-coverage) (default) #0() #f #t #t ((test) (main)) #t)))
  (plt:framework-pref:drracket:most-recent-lang-line "#lang htdp/bsl\n")
  (plt:framework-pref:framework:verify-exit #t)
  (plt:framework-pref:framework:last-opened-files ())

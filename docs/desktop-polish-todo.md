@@ -28,20 +28,6 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
       repeatedly. Root cause is `pamltsp` missing the PAM `password` phase
       — same underlying issue as the `passwd`-does-nothing bug, real fix is
       SSSD. See `docs/DECISIONS.md`.
-- [ ] **DrRacket: highlight untested/uncovered code for the teaching
-      languages** (`#lang htdp/bsl` and the rest of the HtDP family —
-      htdp-bsl+, htdp-isl, htdp-isl+, htdp-asl presumably). Still doesn't
-      highlight untested code with `#lang htdp/bsl` as of 2026-08-25, even
-      after setting preferences in DrRacket's own dialog — the language-level
-      settings vector (`plt:framework-pref:drracket:language-settings`,
-      6-element vector's last slot) captured from the student account's
-      session reads `debug`, not something coverage-related, so whatever
-      controls test-coverage highlighting either lives elsewhere in that
-      vector or isn't exposed through the languages dialog at all. Needs
-      more digging into what that vector's fields actually mean (see
-      `racket-prefs-default.rktd` — worth diffing against what a coverage-
-      enabled setup produces once found) before it can be fixed and
-      defaulted for every student.
 - [ ] **VS Code: install a standard set of extensions globally**, so every
       student has them without needing marketplace/internet access
       individually. Two open questions: which extensions (not yet
@@ -53,6 +39,17 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
 
 ## Done
 
+- [x] **DrRacket: highlight untested/uncovered code** (2026-08-26). The
+      `plt:framework-pref:drracket:language-settings` vector's last field
+      controls this: `debug` (the value htdp/bsl defaulted to) doesn't
+      highlight untested code, `test-coverage` does. Confirmed by Todd after
+      changing it in DrRacket's own dialog. Only that one field changed in
+      `racket-prefs-default.rktd` -- a same-session diff also showed a batch
+      of unrelated changes (a `defs/ints-labels` toggle, the language-picker
+      dialog's remembered tree position, an extra `recent-language-names`
+      entry, window-geometry entries for a second resolution, and personal
+      file-history pointing at `/home/student/Desktop/file.rkt`) that Todd
+      asked to leave out of the template.
 - [x] **Keyboard layout switcher (Dvorak).** Todd uses Dvorak; students get
       standard US qwerty by default with a one-click switch via the `xkb`
       panel plugin (id `16`, right of the expanding separator, left of the
