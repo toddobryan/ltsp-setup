@@ -100,6 +100,48 @@ def test_reset_defaults_is_fine_with_a_missing_resettable_file(
     students.reset_defaults(_ctx(tmp_path, dry_run=False), "pat")
 
 
+# ------------------------------------------------------------- clear_session_lock
+
+
+def test_clear_session_lock_removes_an_existing_lock(tmp_path: Path) -> None:
+    home = tmp_path / "pat"
+    lockdir = home / ".ltsp-session-lock"
+    lockdir.mkdir(parents=True)
+    (lockdir / "host").write_text("client-01\n")
+
+    existed = students.clear_session_lock(_ctx(tmp_path, dry_run=False), "pat")
+
+    assert existed is True
+    assert not lockdir.exists()
+
+
+def test_clear_session_lock_reports_false_when_nothing_to_clear(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pat").mkdir()
+
+    existed = students.clear_session_lock(_ctx(tmp_path, dry_run=False), "pat")
+
+    assert existed is False
+
+
+def test_clear_session_lock_raises_when_home_directory_is_missing(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(StepFailed, match="No home directory"):
+        students.clear_session_lock(_ctx(tmp_path, dry_run=False), "nobody")
+
+
+def test_clear_session_lock_dry_run_deletes_nothing(tmp_path: Path) -> None:
+    home = tmp_path / "pat"
+    lockdir = home / ".ltsp-session-lock"
+    lockdir.mkdir(parents=True)
+
+    students.clear_session_lock(_ctx(tmp_path, dry_run=True), "pat")
+
+    assert lockdir.exists()
+
+
 # ------------------------------------------------------------------ configure_skel
 
 

@@ -102,6 +102,27 @@ def reset_defaults(ctx: Context, username: str) -> None:
     ctx.runner.remove(home / rel for rel in RESETTABLE_DEFAULTS)
 
 
+def clear_session_lock(ctx: Context, username: str) -> bool:
+    """Forcibly release a student's concurrent-login lock.
+
+    See data/ltsp-session-lock-check.sh: a client that crashes or loses
+    power without logging out leaves a lock that only clears itself after
+    ~3 minutes of no heartbeat. For when Todd doesn't want to wait that
+    long (Todd, 2026-08-26: "make it easy for me to clear a lock").
+
+    Returns:
+        True if a lock was actually present and removed, False if there
+        was nothing to clear.
+    """
+    home = _home_dir(ctx, username)
+    if not ctx.runner.exists(home):
+        raise StepFailed(f"No home directory at {home} -- check the username")
+    lockdir = home / ".ltsp-session-lock"
+    existed = ctx.runner.exists(lockdir)
+    ctx.runner.remove_tree(lockdir)
+    return existed
+
+
 def configure_skel(ctx: Context) -> None:
     """Point new-account creation at the current student defaults.
 

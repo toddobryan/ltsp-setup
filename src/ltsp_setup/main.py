@@ -418,6 +418,25 @@ def student_remove_stale(
     console.print(f"[bold]{len(names)} account(s):[/bold] {', '.join(names)}")
 
 
+@student_app.command("clear-lock")
+def student_clear_lock(
+    username: str, debug: DebugOption = True, config: ConfigOption = None
+) -> None:
+    """Forcibly release a student's concurrent-login lock.
+
+    Clients that log out cleanly release their own lock; a client that
+    crashes or loses power leaves one that only clears itself after the
+    heartbeat goes stale (~3 minutes, see data/ltsp-session-lock-check.sh).
+    Use this instead of waiting.
+    """
+    _require_root(debug)
+    existed = students.clear_session_lock(_context(debug, config), username)
+    if existed:
+        console.print(f"[green]Cleared[/green] the session lock for {username}.")
+    else:
+        console.print(f"{username} had no session lock to clear.")
+
+
 # ---------------------------------------------------------------- config
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ltsp_setup import templates
+from ltsp_setup.runner import StepFailed
 from ltsp_setup.stages import Context
 
 SOURCES_LIST = Path("/etc/apt/sources.list.d/official-package-repositories.list")
@@ -14,6 +15,12 @@ AUTOSTART_DIR = Path("/etc/xdg/autostart")
 MIME_DIR = Path("/usr/share/mime")
 MIMEAPPS_LIST = Path("/etc/xdg/mimeapps.list")
 ICON_THEME_ROOT = Path("/usr/share/icons")
+LOCAL_SBIN = Path("/usr/local/sbin")
+PAM_LIGHTDM = Path("/etc/pam.d/lightdm")
+
+# Marks whether the session-lock lines have already been inserted into
+# /etc/pam.d/lightdm, so a re-run doesn't insert them twice.
+SESSION_LOCK_MARKER = "# ltsp-setup: concurrent-login lock"
 
 # Autostart entries hidden for students: they have no privilege to act on
 # any of them, so showing the icon/nag is just confusing clutter (Todd,
@@ -158,3 +165,69 @@ def configure_racket_mime(ctx: Context) -> None:
             icon,
             show=False,
         )
+
+
+def _insert_after(content: str, after: str, new_lines: list[str], path: Path) -> str:
+    lines = content.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == after:
+            lines[i + 1 : i + 1] = new_lines
+            return "\n".join(lines) + "\n"
+    raise StepFailed(f"{path} has no {after!r} line to insert after.")
+
+
+def configure_session_lock(ctx: Context) -> None:
+    """Refuse a second concurrent login for the same student account.
+
+    Both thin clients mount the same NFS-shared home directory, so two
+    simultaneous logins as the same student corrupt things like browser
+    profile locks -- see data/ltsp-session-lock-check.sh for the full
+    mechanism (a pam_exec-driven lock directory, refreshed every 60s by an
+    autostart heartbeat while the session is active, released cleanly on
+    logout, and auto-recovered if a client goes away without logging out).
+
+    Patches /etc/pam.d/lightdm rather than overwriting it wholesale: it's a
+    package-owned conffile, and a full templated replacement would drift
+    from whatever the lightdm package actually ships on the next upgrade
+    (Todd, 2026-08-26) -- the same reasoning as image.py's DEFAULT_IMAGE
+    line-patching versus configure_ltsp's full-file overwrite.
+    """
+    for name, mode in (
+        ("ltsp-session-lock-check.sh", 0o755),
+        ("ltsp-session-lock-release.sh", 0o755),
+        ("ltsp-session-heartbeat.sh", 0o755),
+    ):
+        ctx.runner.write(LOCAL_SBIN / name, templates.read(name), mode=mode)
+    ctx.runner.write(
+        AUTOSTART_DIR / "ltsp-session-heartbeat.desktop",
+        templates.read("ltsp-session-heartbeat.desktop"),
+    )
+
+    if not ctx.runner.exists(PAM_LIGHTDM):
+        # lightdm isn't installed yet -- true during a from-scratch dry-run
+        # preview, before the apps/ltsp stages have run. Nothing to patch
+        # yet; a real run gets here only after lightdm genuinely exists.
+        return
+    content = ctx.runner.read_text(PAM_LIGHTDM)
+    if SESSION_LOCK_MARKER in content:
+        return
+    content = _insert_after(
+        content,
+        "@include common-auth",
+        [
+            SESSION_LOCK_MARKER,
+            "auth    requisite       pam_exec.so quiet "
+            f"{LOCAL_SBIN / 'ltsp-session-lock-check.sh'}",
+        ],
+        PAM_LIGHTDM,
+    )
+    content = _insert_after(
+        content,
+        "@include common-session",
+        [
+            "session optional        pam_exec.so quiet type=close_session "
+            f"{LOCAL_SBIN / 'ltsp-session-lock-release.sh'}",
+        ],
+        PAM_LIGHTDM,
+    )
+    ctx.runner.write(PAM_LIGHTDM, content, mode=0o644)

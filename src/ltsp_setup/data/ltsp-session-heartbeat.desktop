@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Session Lock Heartbeat
+Comment=Keeps this session's concurrent-login lock fresh (steps/common.py::configure_session_lock)
+Exec=/usr/local/sbin/ltsp-session-heartbeat.sh
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

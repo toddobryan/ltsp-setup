@@ -298,6 +298,44 @@ genuine pipelines (dearmoring a GPG key) and is used twice. This is partly
 hygiene and partly because the old code had a bug that came directly from
 mixing the two — see below.
 
+### Concurrent-login lock: a directory on NFS home, not a PAM session count
+
+Todd's concern (2026-08-26): two thin clients logged in as the same student
+account both write to the same NFS-mounted home directory, which corrupts
+things like browser profile locks (the Chrome singleton-lockfile problem
+below is one instance of this general class of bug). `pam_limits`'
+`maxlogins` looked like the obvious fix — it's already wired into
+`/etc/pam.d/lightdm` (`session required pam_limits.so`) — but it only counts
+sessions in the *local* utmp, and each thin client is its own independent
+boot with its own utmp. It can't see a login on a different client at all.
+
+Instead, `steps/common.py::configure_session_lock` patches
+`/etc/pam.d/lightdm` (a package-owned conffile, hence patched in place with
+`_insert_after` rather than templated wholesale — same reasoning as
+`image.py`'s `DEFAULT_IMAGE` line-patching) to run
+`data/ltsp-session-lock-check.sh` via `pam_exec` in the `auth` phase. It
+takes an atomic `mkdir` lock (atomic even over NFS, unlike `flock`) in a
+directory inside the student's own home, refuses a login from a different
+hostname while that lock is fresh, and auto-recovers if the owning client
+goes silent for more than `STALE_SECONDS` (180s) — e.g. it crashed or lost
+power without logging out. An XFCE autostart entry
+(`ltsp-session-heartbeat.desktop` → `ltsp-session-heartbeat.sh`) refreshes
+the lock every 60s for the life of the session so a real, still-active
+session is never mistaken for an abandoned one; `ltsp-session-lock-release.sh`
+(PAM `close_session`) removes the lock on a clean logout. `ltsp-setup student
+clear-lock <username>` removes one by hand, for when 180s is still too long
+to wait.
+
+**Not yet tested against real hardware or a real PAM/lightdm login** — only
+the shell scripts' own state machine (acquire, same-client refresh, refuse,
+stale takeover, clean release) has been exercised directly, with a stubbed
+`hostname` command standing in for a second client. The PAM wiring itself
+(insertion into a real `/etc/pam.d/lightdm`, whether `pam_exec`'s `auth
+requisite` failure actually surfaces a clear message to the LightDM greeter
+rather than a generic "authentication failed", and whether the autostart
+heartbeat actually starts and survives for the session) needs a real
+two-client test before this can be trusted in the classroom.
+
 ---
 
 ## Bugs found in the old code

@@ -44,6 +44,7 @@ def _desktop(ctx: Context) -> None:
     common.configure_dconf(ctx)
     common.configure_autostart(ctx)
     common.configure_racket_mime(ctx)
+    common.configure_session_lock(ctx)
 
 
 def _skel(ctx: Context) -> None:
