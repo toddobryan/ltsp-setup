@@ -16,12 +16,6 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
 
 ## Open
 
-- [ ] **Chrome's stale singleton lockfile.** Recurring problem last school
-      year: a student's session ending uncleanly leaves
-      `~/.config/google-chrome/Singleton{Lock,Cookie,Socket}` behind: NFS
-      home + fresh login means any leftover lock is always stale, so
-      clearing it at session start should be safe. See `docs/DECISIONS.md`
-      → "Deferred, deliberately" for the full writeup.
 - [ ] **GNOME keyring / login password mismatch.** After a server-side
       password change, Chrome (and anything else touching the keyring)
       prompts with a mismatch dialog the student has to Cancel through
@@ -39,6 +33,18 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
 
 ## Done
 
+- [x] **Chrome's stale singleton lockfile** (2026-08-26). Real recurring
+      problem last school year: a session ending uncleanly leaves
+      `~/.config/google-chrome/Singleton{Lock,Cookie,Socket}` behind, and
+      the next login's Chrome silently exits trying to hand off to that
+      "existing" instance -- no error, no window, just nothing when you
+      click the launcher. `steps/common.py::configure_chrome_singleton_cleanup`
+      removes those three files at every session start, before Chrome ever
+      runs (`data/chrome-singleton-cleanup.sh`, run via an XFCE autostart
+      entry). Only safe because of the concurrent-login lock added the same
+      day (`configure_session_lock`) -- without it, a second still-active
+      session on another client would leave a *real*, non-stale lock, and
+      unconditionally deleting it would break that other session.
 - [x] **DrRacket: highlight untested/uncovered code** (2026-08-26). The
       `plt:framework-pref:drracket:language-settings` vector's last field
       controls this: `debug` (the value htdp/bsl defaulted to) doesn't

@@ -231,3 +231,25 @@ def configure_session_lock(ctx: Context) -> None:
         PAM_LIGHTDM,
     )
     ctx.runner.write(PAM_LIGHTDM, content, mode=0o644)
+
+
+def configure_chrome_singleton_cleanup(ctx: Context) -> None:
+    """Remove Chrome's stale SingletonLock at every session start.
+
+    Safe only because of configure_session_lock: a fresh login can't happen
+    while a real session is genuinely still active elsewhere, so any lock
+    still present at this point is always left over from a session that
+    ended uncleanly (crash, power loss, forced logout), never one that's
+    still using Chrome right now. Without configure_session_lock in place,
+    unconditionally deleting this would risk pulling the rug out from under
+    a real second session (Todd, 2026-08-26).
+    """
+    ctx.runner.write(
+        LOCAL_SBIN / "chrome-singleton-cleanup.sh",
+        templates.read("chrome-singleton-cleanup.sh"),
+        mode=0o755,
+    )
+    ctx.runner.write(
+        AUTOSTART_DIR / "chrome-singleton-cleanup.desktop",
+        templates.read("chrome-singleton-cleanup.desktop"),
+    )

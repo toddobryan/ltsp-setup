@@ -524,26 +524,28 @@ Recording these too, same reason as above.
   would call, but the "boot the template, update its packages, shut it back
   down" half doesn't exist yet — Todd wants that added later, once the
   create/build split above has actually been exercised on real hardware.
-- **Chrome's stale singleton lockfile.** Real recurring problem last school
-  year (reported 2026-08-20, not yet reproduced or fixed on this build): if
-  a student's session ends uncleanly — powering off the thin client, or
-  otherwise leaving Chrome "running" from the client's point of view —
-  `~/.config/google-chrome/Singleton{Lock,Cookie,Socket}` survive in the
-  student's (NFS-mounted) home directory. On the next login, `google-chrome`
-  tries to hand off to that "existing" instance over the singleton socket,
-  gets no response since the process is long gone, and just exits — no
-  error, no window, nothing, so clicking the launcher looks like it did
-  nothing at all. Todd wrote a `fix-chrome` script students could run by
-  hand to delete the lockfiles; the better fix is automatic. Because home is
-  NFS-mounted and each thin-client login is a fresh session, a login can
-  never legitimately find a live Chrome process still holding that lock —
-  whatever's there is stale — so it should be safe to unconditionally clear
-  `~/.config/google-chrome/Singleton*` at the start of every session, before
-  Chrome ever runs. Two ways to do that, neither built yet: a login-time
-  cleanup step (fits alongside `steps/common.py::configure_dconf`, the same
-  place student defaults are meant to land — see "Student default
-  configuration" above) or a wrapper around the `google-chrome` launcher
-  itself.
+- **Chrome's stale singleton lockfile — fixed 2026-08-26, no longer
+  deferred.** Real recurring problem last school year (reported
+  2026-08-20): if a student's session ends uncleanly — powering off the
+  thin client, or otherwise leaving Chrome "running" from the client's
+  point of view — `~/.config/google-chrome/Singleton{Lock,Cookie,Socket}`
+  survive in the student's (NFS-mounted) home directory. On the next login,
+  `google-chrome` tries to hand off to that "existing" instance over the
+  singleton socket, gets no response since the process is long gone, and
+  just exits — no error, no window, nothing, so clicking the launcher looks
+  like it did nothing at all. Todd wrote a `fix-chrome` script students
+  could run by hand to delete the lockfiles; `steps/common.py::
+  configure_chrome_singleton_cleanup` now does it automatically, at every
+  session start, before Chrome ever runs. This originally looked safe on
+  its own reasoning ("each thin-client login is a fresh session, so a login
+  can never legitimately find a live Chrome process still holding that
+  lock") — but that reasoning quietly depended on an assumption that turned
+  out not to hold until the same day: nothing was actually stopping the
+  same student account from being logged into *two* thin clients at once,
+  in which case the second client's "stale" lock would really belong to the
+  first client's still-live session. Fixed together with the concurrent-
+  login lock (see "Concurrent-login lock" above) — this cleanup would be
+  unsafe without it.
 
 ## Dropped from the app list
 

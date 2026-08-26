@@ -182,3 +182,25 @@ def test_configure_session_lock_raises_when_common_auth_include_is_missing(
 
     with pytest.raises(StepFailed, match="common-auth"):
         common.configure_session_lock(ctx)
+
+
+def test_configure_chrome_singleton_cleanup_writes_the_script_and_autostart(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="ltsp-setup")
+    ctx = Context(Settings(), Runner(dry_run=True))
+
+    common.configure_chrome_singleton_cleanup(ctx)
+
+    script_target = common.LOCAL_SBIN / "chrome-singleton-cleanup.sh"
+    [script_record] = [
+        r for r in caplog.records if r.message.startswith(f"write {script_target}:")
+    ]
+    assert "SingletonLock" in script_record.message
+    assert "SingletonCookie" in script_record.message
+    assert "SingletonSocket" in script_record.message
+
+    autostart_target = common.AUTOSTART_DIR / "chrome-singleton-cleanup.desktop"
+    assert any(
+        r.message.startswith(f"write {autostart_target}:") for r in caplog.records
+    )

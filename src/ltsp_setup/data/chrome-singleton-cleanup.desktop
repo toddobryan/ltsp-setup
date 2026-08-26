@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Chrome Singleton Lock Cleanup
+Comment=Removes stale Chrome session locks at login (steps/common.py::configure_chrome_singleton_cleanup)
+Exec=/usr/local/sbin/chrome-singleton-cleanup.sh
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
