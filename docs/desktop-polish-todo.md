@@ -16,12 +16,6 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
 
 ## Open
 
-- [ ] **GNOME keyring / login password mismatch.** After a server-side
-      password change, Chrome (and anything else touching the keyring)
-      prompts with a mismatch dialog the student has to Cancel through
-      repeatedly. Root cause is `pamltsp` missing the PAM `password` phase
-      — same underlying issue as the `passwd`-does-nothing bug, real fix is
-      SSSD. See `docs/DECISIONS.md`.
 - [ ] **VS Code: install a standard set of extensions globally**, so every
       student has them without needing marketplace/internet access
       individually. Two open questions: which extensions (not yet
@@ -33,6 +27,18 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
 
 ## Done
 
+- [x] **GNOME keyring / login password mismatch** (2026-08-26). After a
+      server-side password change, Chrome (and anything else touching the
+      keyring) prompted with a mismatch dialog the student had to Cancel
+      through repeatedly. Root cause: an admin-driven `passwd` reset has no
+      way to re-encrypt the student's existing keyring (that needs the
+      *old* password), so it's left permanently locked. Fixed not by
+      chasing the SSSD-based real-account fix once flagged here, but by
+      making the reset itself clear the stale keyring:
+      `ltsp-setup student reset-password <username>` runs `passwd`
+      interactively, then deletes `~/.local/share/keyrings`, so GNOME
+      builds a fresh one — auto-unlocked with the new password — at the
+      next login (`steps/students.py::reset_password`).
 - [x] **Chrome's stale singleton lockfile** (2026-08-26). Real recurring
       problem last school year: a session ending uncleanly leaves
       `~/.config/google-chrome/Singleton{Lock,Cookie,Socket}` behind, and
