@@ -123,6 +123,36 @@ def clear_session_lock(ctx: Context, username: str) -> bool:
     return existed
 
 
+KEYRING_DIR_REL = Path(".local/share/keyrings")
+
+
+def reset_password(ctx: Context, username: str) -> bool:
+    """Reset a student's Unix password, and clear their now-stale keyring.
+
+    An admin-driven ``passwd`` has no way to re-encrypt the student's
+    existing GNOME keyring -- that needs the *old* password, which is
+    exactly what an admin reset doesn't have -- so the keyring is left
+    permanently locked afterwards. Deleting it here makes GNOME create a
+    fresh one, auto-unlocked with the new password, at the student's next
+    login (Todd, 2026-08-26).
+
+    Runs ``passwd`` interactively, same as running it directly: meant to be
+    used with the student present to enter and confirm the new password.
+
+    Returns:
+        True if a stale keyring was actually present and removed, False if
+        there was nothing to clear.
+    """
+    home = _home_dir(ctx, username)
+    if not ctx.runner.exists(home):
+        raise StepFailed(f"No home directory at {home} -- check the username")
+    ctx.runner.run(["passwd", username])
+    keyring_dir = home / KEYRING_DIR_REL
+    existed = ctx.runner.exists(keyring_dir)
+    ctx.runner.remove_tree(keyring_dir)
+    return existed
+
+
 def configure_skel(ctx: Context) -> None:
     """Point new-account creation at the current student defaults.
 

@@ -437,6 +437,26 @@ def student_clear_lock(
         console.print(f"{username} had no session lock to clear.")
 
 
+@student_app.command("reset-password")
+def student_reset_password(
+    username: str, debug: DebugOption = True, config: ConfigOption = None
+) -> None:
+    """Reset a student's password and clear their now-stale keyring.
+
+    Runs `passwd <username>` interactively -- have the student there to
+    enter and confirm the new password -- then deletes their GNOME keyring,
+    since an admin-driven reset can't re-encrypt it (that needs the old
+    password). A fresh keyring is created automatically, unlocked with the
+    new password, at the student's next login.
+    """
+    _require_root(debug)
+    existed = students.reset_password(_context(debug, config), username)
+    if existed:
+        console.print(f"[green]Cleared[/green] the stale keyring for {username}.")
+    else:
+        console.print(f"{username} had no keyring to clear.")
+
+
 # ---------------------------------------------------------------- config
 
 

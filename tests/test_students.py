@@ -142,6 +142,62 @@ def test_clear_session_lock_dry_run_deletes_nothing(tmp_path: Path) -> None:
     assert lockdir.exists()
 
 
+# ------------------------------------------------------------------- reset_password
+
+
+def test_reset_password_runs_passwd_and_clears_a_stale_keyring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "pat"
+    keyring_dir = home / students.KEYRING_DIR_REL
+    keyring_dir.mkdir(parents=True)
+    (keyring_dir / "login.keyring").write_text("stale")
+    ctx = _ctx(tmp_path, dry_run=False)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: calls.append(list(argv)))
+
+    existed = students.reset_password(ctx, "pat")
+
+    assert existed is True
+    assert not keyring_dir.exists()
+    assert calls == [["passwd", "pat"]]
+
+
+def test_reset_password_reports_false_when_no_keyring_to_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pat").mkdir()
+    ctx = _ctx(tmp_path, dry_run=False)
+    monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+
+    existed = students.reset_password(ctx, "pat")
+
+    assert existed is False
+
+
+def test_reset_password_raises_when_home_directory_is_missing(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(StepFailed, match="No home directory"):
+        students.reset_password(_ctx(tmp_path, dry_run=False), "nobody")
+
+
+def test_reset_password_dry_run_deletes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "pat"
+    keyring_dir = home / students.KEYRING_DIR_REL
+    keyring_dir.mkdir(parents=True)
+    ctx = _ctx(tmp_path, dry_run=True)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: calls.append(list(argv)))
+
+    students.reset_password(ctx, "pat")
+
+    assert keyring_dir.exists()
+    assert calls == [["passwd", "pat"]]
+
+
 # ------------------------------------------------------------------ configure_skel
 
 
