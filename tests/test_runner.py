@@ -103,3 +103,41 @@ def test_remove_tree_real_run_deletes_it(tmp_path: Path) -> None:
 
 def test_remove_tree_is_a_no_op_for_a_missing_path(tmp_path: Path) -> None:
     Runner(dry_run=False).remove_tree(tmp_path / "missing")
+
+
+def test_ensure_block_appends_to_an_existing_file(tmp_path: Path) -> None:
+    target = tmp_path / ".bashrc"
+    target.write_text("existing content\n")
+
+    Runner(dry_run=False).ensure_block(target, "# marker", "# marker\nsome line\n")
+
+    text = target.read_text()
+    assert text.startswith("existing content\n")
+    assert "# marker\nsome line\n" in text
+
+
+def test_ensure_block_creates_a_missing_file(tmp_path: Path) -> None:
+    target = tmp_path / ".bashrc"
+
+    Runner(dry_run=False).ensure_block(target, "# marker", "# marker\nsome line\n")
+
+    assert target.read_text() == "# marker\nsome line\n"
+
+
+def test_ensure_block_is_a_no_op_when_the_marker_is_already_present(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / ".bashrc"
+    target.write_text("# marker\nsome line, hand-edited\n")
+
+    Runner(dry_run=False).ensure_block(target, "# marker", "# marker\nsome line\n")
+
+    assert target.read_text() == "# marker\nsome line, hand-edited\n"
+
+
+def test_ensure_block_dry_run_writes_nothing(tmp_path: Path) -> None:
+    target = tmp_path / ".bashrc"
+
+    Runner(dry_run=True).ensure_block(target, "# marker", "# marker\nsome line\n")
+
+    assert not target.exists()

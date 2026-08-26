@@ -1,0 +1,6 @@
+# --- ltsp-setup: ctrl-alt-swap ---
+# Some students -- and Mac users especially -- prefer having Ctrl right
+# next to the spacebar instead of Alt. Uncomment the line below to swap
+# the left Ctrl and left Alt keys for your own account only.
+#setxkbmap -option ctrl:swap_lalt_lctl
+# --- end ltsp-setup ---

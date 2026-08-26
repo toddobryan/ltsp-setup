@@ -57,6 +57,22 @@ RESETTABLE_DEFAULTS: dict[Path, str] = {
 
 SKEL_ROOT = Path("/etc/skel")
 
+# An opt-in convenience, not a default -- appended once via
+# Runner.ensure_block rather than tracked in RESETTABLE_DEFAULTS, since it's
+# meant for a student to hand-edit (uncomment the setxkbmap line) rather
+# than something reset_defaults should ever delete or apply_defaults treat
+# as "customized" (Todd, 2026-08-26).
+BASHRC_CTRL_SWAP_MARKER = "# --- ltsp-setup: ctrl-alt-swap ---"
+
+
+def _ensure_bashrc_snippet(ctx: Context, bashrc_path: Path) -> None:
+    ctx.runner.ensure_block(
+        bashrc_path,
+        BASHRC_CTRL_SWAP_MARKER,
+        templates.read("bashrc-ctrl-swap-snippet"),
+    )
+
+
 # A snapshot of each template's content as of the last apply_defaults(_all)
 # run, kept so the next run can tell "the template changed this" apart from
 # "the student changed this" -- see steps/xfconf.py. One snapshot per
@@ -98,6 +114,7 @@ def configure_skel(ctx: Context) -> None:
     """
     for rel, template_name in RESETTABLE_DEFAULTS.items():
         ctx.runner.write(SKEL_ROOT / rel, templates.read(template_name))
+    _ensure_bashrc_snippet(ctx, SKEL_ROOT / ".bashrc")
 
 
 # ------------------------------------------------------------- enumeration
@@ -237,6 +254,7 @@ def _apply_defaults_using(
             ctx.runner.write(target, content)
         result.applied.extend(f"{rel.name}:{p}" for p in applied)
         result.skipped.extend((f"{rel.name}:{p}", reason) for p, reason in skipped)
+    _ensure_bashrc_snippet(ctx, home / ".bashrc")
     return result
 
 

@@ -213,6 +213,28 @@ class Runner:
                 handle.write("\n")
             handle.write(line + "\n")
 
+    def ensure_block(self, path: Path, marker: str, block: str) -> None:
+        """Append ``block`` to ``path`` once, identified by ``marker``.
+
+        Unlike :meth:`append_line`, which matches a single exact line, this
+        only checks whether ``marker`` appears anywhere in the file -- so a
+        student who has since hand-edited *inside* the block (e.g.
+        uncommenting a line) is never mistaken for "not applied yet" and
+        doesn't get a second copy appended.
+        """
+        self._show("ensure block", f"{marker!r} -> {path}")
+        if self.dry_run:
+            return
+        existing = path.read_text() if path.exists() else ""
+        if marker in existing:
+            return
+        with open(path, "a") as handle:
+            if existing and not existing.endswith("\n"):
+                handle.write("\n")
+            handle.write(block)
+            if not block.endswith("\n"):
+                handle.write("\n")
+
     def mkdir(self, path: Path, *, mode: int = 0o755) -> None:
         """Create a directory and any missing parents."""
         self._show("mkdir", str(path))

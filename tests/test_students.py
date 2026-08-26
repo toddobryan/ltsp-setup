@@ -189,6 +189,22 @@ def test_configure_skel_racket_prefs_highlights_spring_parens_and_bsl(
     assert "drracket:recently-closed-tabs ()" in record.message
 
 
+def test_configure_skel_appends_the_ctrl_swap_snippet_commented_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skel = tmp_path / "etc-skel"
+    monkeypatch.setattr(students, "SKEL_ROOT", skel)
+    skel.mkdir()
+    (skel / ".bashrc").write_text("# stock bashrc\n")
+    ctx = Context(Settings(), Runner(dry_run=False))
+
+    students.configure_skel(ctx)
+
+    text = (skel / ".bashrc").read_text()
+    assert text.startswith("# stock bashrc\n")
+    assert "#setxkbmap -option ctrl:swap_lalt_lctl" in text
+
+
 # ---------------------------------------------------------- real_student_accounts
 
 
@@ -278,6 +294,41 @@ def test_apply_defaults_writes_missing_files(tmp_path: Path) -> None:
     assert result.skipped == []
     for rel in students.RESETTABLE_DEFAULTS:
         assert (home / rel).exists()
+
+
+def test_apply_defaults_adds_the_ctrl_swap_snippet_to_an_existing_account(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "pat"
+    home.mkdir()
+    (home / ".bashrc").write_text("# pat's own bashrc\n")
+    ctx = _ctx(tmp_path, dry_run=False)
+
+    students.apply_defaults(ctx, "pat")
+
+    text = (home / ".bashrc").read_text()
+    assert text.startswith("# pat's own bashrc\n")
+    assert "#setxkbmap -option ctrl:swap_lalt_lctl" in text
+
+
+def test_apply_defaults_does_not_duplicate_an_already_uncommented_snippet(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "pat"
+    home.mkdir()
+    (home / ".bashrc").write_text(
+        "# --- ltsp-setup: ctrl-alt-swap ---\n"
+        "setxkbmap -option ctrl:swap_lalt_lctl\n"
+        "# --- end ltsp-setup ---\n"
+    )
+    ctx = _ctx(tmp_path, dry_run=False)
+
+    students.apply_defaults(ctx, "pat")
+
+    text = (home / ".bashrc").read_text()
+    assert text.count("ltsp-setup: ctrl-alt-swap") == 1
+    assert "setxkbmap -option ctrl:swap_lalt_lctl" in text
+    assert "#setxkbmap" not in text
 
 
 def test_apply_defaults_second_call_is_a_no_op_when_nothing_changed(
