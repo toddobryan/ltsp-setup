@@ -53,5 +53,5 @@ if [ "$age" -gt "$STALE_SECONDS" ]; then
     exit 0
 fi
 
-echo "Already logged in on $owner ($age""s ago). Log out there first, or ask your teacher to clear the lock." >&2
+echo "Already logged in on $owner ($age""s ago). Log out there first, or ask your teacher to clear the lock."
 exit 1

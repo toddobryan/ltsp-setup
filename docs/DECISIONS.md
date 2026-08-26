@@ -326,15 +326,22 @@ session is never mistaken for an abandoned one; `ltsp-session-lock-release.sh`
 clear-lock <username>` removes one by hand, for when 180s is still too long
 to wait.
 
-**Not yet tested against real hardware or a real PAM/lightdm login** — only
-the shell scripts' own state machine (acquire, same-client refresh, refuse,
-stale takeover, clean release) has been exercised directly, with a stubbed
-`hostname` command standing in for a second client. The PAM wiring itself
-(insertion into a real `/etc/pam.d/lightdm`, whether `pam_exec`'s `auth
-requisite` failure actually surfaces a clear message to the LightDM greeter
-rather than a generic "authentication failed", and whether the autostart
-heartbeat actually starts and survives for the session) needs a real
-two-client test before this can be trusted in the classroom.
+**Tested against real hardware 2026-08-26** — Todd logged into the same
+student account on two real thin clients: the second login was refused, and
+logging out of the first let the second in immediately after. One gap found
+in that test: `pam_exec`'s `auth requisite` failure showed LightDM's generic
+"Invalid password" rather than the script's actual message, because
+`pam_exec` sends a failing child's output to `/dev/null` by default. Fixed
+by adding the `stdout` option (`auth requisite pam_exec.so quiet stdout
+...`), which relays the script's stdout to the greeter via `pam_info()`, and
+moving the refusal message from stderr to stdout to actually reach it.
+
+Caught by the same real-hardware test this decision used to call for, and
+one more thing worth remembering from it: the `desktop` stage had silently
+run against a stale install on the template earlier in the session (see
+`docs/desktop-polish-todo.md`) — a passing dry-run and a clean `pytest` run
+here never would have caught either of these, only actually logging in on
+two real clients did.
 
 ---
 

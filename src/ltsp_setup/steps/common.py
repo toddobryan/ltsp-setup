@@ -216,7 +216,7 @@ def configure_session_lock(ctx: Context) -> None:
         "@include common-auth",
         [
             SESSION_LOCK_MARKER,
-            "auth    requisite       pam_exec.so quiet "
+            "auth    requisite       pam_exec.so quiet stdout "
             f"{LOCAL_SBIN / 'ltsp-session-lock-check.sh'}",
         ],
         PAM_LIGHTDM,
