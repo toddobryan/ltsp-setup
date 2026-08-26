@@ -142,12 +142,16 @@ def convert_to_raw(ctx: Context, image_name: str | None = None) -> Path:
     where the template lives on the workstation instead (a copy-on-write
     overlay on the golden image, for speed and disk space) and only the
     resulting raw file gets copied over to the server. See DECISIONS.md.
+
+    ``-p`` shows a live progress percentage -- this step reads and writes
+    tens of gigabytes and would otherwise sit silent for minutes at a time
+    (Todd, 2026-08-26).
     """
     ct = ctx.settings.client_template
     raw_path = raw_image_path(ctx, image_name)
     ctx.runner.mkdir(raw_path.parent)
     ctx.runner.run(
-        ["qemu-img", "convert", "-O", "raw", str(ct.disk_path), str(raw_path)]
+        ["qemu-img", "convert", "-p", "-O", "raw", str(ct.disk_path), str(raw_path)]
     )
     return raw_path
 
