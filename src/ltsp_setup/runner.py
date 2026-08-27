@@ -148,6 +148,25 @@ class Runner:
         path.write_text(content)
         path.chmod(mode)
 
+    def write_secret(self, path: Path, content: str, *, mode: int = 0o600) -> None:
+        """Write ``content`` to ``path`` without ever logging or printing it.
+
+        For real secrets (student passwords) -- ``write()``'s
+        ``logger.info("write %s:\\n%s", path, content)`` call is
+        unconditional regardless of its own ``show`` flag, so it isn't safe
+        for content that shouldn't end up sitting in ``/var/log`` forever.
+        Only the path is announced/logged here. Creates parent directories
+        at ``0o700`` rather than ``write()``'s default, since a directory
+        holding secret files shouldn't be group/world-readable either.
+        """
+        self._show("write", f"{path} [dim](mode {mode:o}, content withheld)[/dim]")
+        logger.info("write %s: <content withheld>", path)
+        if self.dry_run:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path.write_text(content)
+        path.chmod(mode)
+
     def read_text(self, path: Path) -> str:
         """Read a file's current contents.
 
@@ -198,6 +217,18 @@ class Runner:
         change, the same reasoning as :meth:`read_text`.
         """
         return [(entry.pw_name, entry.pw_uid) for entry in pwd.getpwall()]
+
+    def group_exists(self, name: str) -> bool:
+        """True if a Unix group of this name already exists.
+
+        Always checked for real, even in a dry run -- inspection, not a
+        change, the same reasoning as :meth:`passwd_entries`.
+        """
+        try:
+            grp.getgrnam(name)
+            return True
+        except KeyError:
+            return False
 
     def append_line(self, path: Path, line: str) -> None:
         """Append ``line`` to ``path`` unless it is already there."""

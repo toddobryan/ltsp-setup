@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>$TITLE</title>
+<style>
+  body { font-family: sans-serif; margin: 0.5in; }
+  h1 { font-size: 14pt; margin-bottom: 4px; }
+  .meta { font-size: 9pt; color: #666; margin-bottom: 16px; }
+  .cards { display: flex; flex-wrap: wrap; }
+  .card {
+    box-sizing: border-box;
+    width: 3.25in;
+    padding: 10px 12px;
+    border: 1px dashed #999;
+    margin: -1px 0 0 -1px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .card .name { font-weight: bold; font-size: 12pt; }
+  .card .field { font-size: 11pt; margin-top: 4px; }
+  .card .label {
+    color: #666;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  @media print {
+    .meta { display: none; }
+  }
+</style>
+</head>
+<body>
+<h1>$TITLE</h1>
+<div class="meta">Generated $GENERATED_AT -- $COUNT account(s). Cut along the dashed lines.</div>
+<div class="cards">
+$CARDS
+</div>
+</body>
+</html>

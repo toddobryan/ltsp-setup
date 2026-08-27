@@ -15,7 +15,7 @@ from ltsp_setup import plans, stages
 from ltsp_setup.lab.virt import Virt
 from ltsp_setup.runner import Runner, StepFailed, console
 from ltsp_setup.stages import Context
-from ltsp_setup.steps import client, image, students
+from ltsp_setup.steps import client, image, roster, students
 
 LOG_FILE = Path("/var/log/ltsp-setup.log")
 
@@ -455,6 +455,34 @@ def student_reset_password(
         console.print(f"[green]Cleared[/green] the stale keyring for {username}.")
     else:
         console.print(f"{username} had no keyring to clear.")
+
+
+@student_app.command("create-from-roster")
+def student_create_from_roster(
+    csv_path: Path, debug: DebugOption = True, config: ConfigOption = None
+) -> None:
+    """Create accounts for every student in a roster CSV export.
+
+    Idempotent -- a login that already exists is skipped, not recreated, so
+    this is safe to re-run later against an updated roster. Refuses to
+    create anything at all if the roster would give two different students
+    the same login. Generated passwords go to a handout file (printed to
+    the console, never the passwords themselves); which Unix group each
+    student gets comes from `students.course_groups` in config.
+    """
+    _require_root(debug)
+    result = roster.import_roster(_context(debug, config), csv_path)
+    if result.created:
+        console.print(f"[bold green]Created:[/bold green] {', '.join(result.created)}")
+    if result.skipped_existing:
+        console.print(
+            f"[yellow]Already existed, skipped:[/yellow] "
+            f"{', '.join(result.skipped_existing)}"
+        )
+    if result.handout_path:
+        console.print(f"Handout: {result.handout_path}")
+    elif not result.created and not result.skipped_existing:
+        console.print("No students in that roster.")
 
 
 # ---------------------------------------------------------------- config

@@ -208,6 +208,26 @@ class Students:
     uid_max: int = 60000
     protected_usernames: tuple[str, ...] = ("toddobryan", "student")
 
+    # Maps the first whitespace-delimited token of a roster CSV row's
+    # "Course" field to a comma-joinable Unix group name (or names, for a
+    # student enrolled in more than one mapped section) -- see
+    # steps/roster.py::import_roster. Fall 2026: alternating Red/White days,
+    # 4 periods each -- Todd's own r3/w1 are his planning periods.
+    course_groups: dict[str, str] = field(
+        default_factory=lambda: {
+            "45639741-1": "r1",
+            "45639741-2": "r4",
+            "45639741-3": "w2",
+            "45639741-4": "w3",
+            "45639741-5": "w4",
+            "42300011-7": "r2",
+            "45229711-1012": "hr",
+            "45000011-2315": "sa",
+            "45000011-2415": "sa",
+            "85000013-421": "sa",
+        }
+    )
+
 
 @dataclass(frozen=True)
 class Settings:
