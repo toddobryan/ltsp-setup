@@ -148,7 +148,11 @@ def configure_ltsp(ctx: Context) -> None:
     ctx.runner.write(
         LTSP_CONF,
         templates.render(
-            "ltsp.conf", {"DEFAULT_IMAGE": ctx.settings.client_template.image_name}
+            "ltsp.conf",
+            {
+                "DEFAULT_IMAGE": ctx.settings.client_template.image_name,
+                "LTSP_ADDRESS": ctx.settings.networking.ltsp_address,
+            },
         ),
         mode=0o660,
     )

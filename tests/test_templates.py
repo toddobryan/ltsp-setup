@@ -29,9 +29,22 @@ def test_rust_profile_keeps_literal_shell_variables() -> None:
 
 
 def test_ltsp_conf_sets_default_image() -> None:
-    text = templates.render("ltsp.conf", {"DEFAULT_IMAGE": "ltsp-client-template"})
+    text = templates.render(
+        "ltsp.conf",
+        {"DEFAULT_IMAGE": "ltsp-client-template", "LTSP_ADDRESS": "192.168.67.1"},
+    )
     assert "[server]" in text
     assert 'DEFAULT_IMAGE="ltsp-client-template"' in text
+
+
+def test_ltsp_conf_applies_to_clients_not_the_server() -> None:
+    text = templates.render(
+        "ltsp.conf",
+        {"DEFAULT_IMAGE": "ltsp-client-template", "LTSP_ADDRESS": "192.168.67.1"},
+    )
+    assert "[clients]" in text
+    assert 'LIGHTDM_CONF="greeter-hide-users=true"' in text
+    assert "ServerName 192.168.67.1" in text
 
 
 def test_isolated_network_has_no_forward_or_ip_element() -> None:
