@@ -25,6 +25,14 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
       research into a shared/system-wide extensions directory or baking
       them into the image at build time).
 
+- [ ] **xfwm4 window theme: Kokodi** (added 2026-08-26). Wider grab areas
+      around window edges than the stock theme, easier to resize windows
+      with. `steps/students.py`'s `RESETTABLE_DEFAULTS` now maps
+      `xfwm4.xml` -> `data/xfwm4-default.xml` (just the one `theme`
+      property, same minimal style as `keyboard-layout-default.xml`), same
+      per-student `/etc/skel` + property-level merge mechanism as the panel
+      and keyboard layout. Not yet confirmed against a real fresh login.
+
 ## Done
 
 - [x] **GNOME keyring / login password mismatch** (2026-08-26). After a

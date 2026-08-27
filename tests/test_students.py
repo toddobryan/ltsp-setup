@@ -388,6 +388,7 @@ def test_apply_defaults_writes_missing_files(tmp_path: Path) -> None:
         "keyboard-layout.xml: created",
         "racket-prefs.rktd: created",
         "xfce4-panel.xml: created",
+        "xfwm4.xml: created",
     ]
     assert result.skipped == []
     for rel in students.RESETTABLE_DEFAULTS:
@@ -526,6 +527,7 @@ def test_apply_defaults_dry_run_creates_nothing_and_does_not_advance_baseline(
         "keyboard-layout.xml: created",
         "racket-prefs.rktd: created",
         "xfce4-panel.xml: created",
+        "xfwm4.xml: created",
     ]
     for rel in students.RESETTABLE_DEFAULTS:
         assert not (home / rel).exists()
@@ -550,6 +552,7 @@ def test_apply_defaults_all_covers_every_real_student_account(
             "keyboard-layout.xml: created",
             "racket-prefs.rktd: created",
             "xfce4-panel.xml: created",
+            "xfwm4.xml: created",
         ]
 
 

@@ -52,6 +52,7 @@ RESETTABLE_DEFAULTS: dict[Path, str] = {
     Path(
         ".config/xfce4/xfconf/xfce-perchannel-xml/keyboard-layout.xml"
     ): "keyboard-layout-default.xml",
+    Path(".config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"): "xfwm4-default.xml",
     Path(".config/racket/racket-prefs.rktd"): "racket-prefs-default.rktd",
 }
 
