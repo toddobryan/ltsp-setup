@@ -82,6 +82,18 @@ itself, imaged locally, no cross-machine hand-carry needed. Along the way:
   tool and aren't reflected in `data/ltsp.conf`. `set_default_image` patches
   only the `DEFAULT_IMAGE` line in place instead — see
   `steps/image.py::_with_default_image`.
+
+  **The underlying gap is fixed now (2026-08-26)** — `data/ltsp.conf`
+  gained a real `[clients]` section (`FSTAB_HOME`, `LIGHTDM_CONF`,
+  `POST_INIT_CUPS`, `POST_INIT_NOCUPSD`) and `NFS_HOME=1`, found by diffing
+  against this same real server's `ltsp.conf` (see "Bugs found on the
+  first real run" below). The caution above still holds for a different
+  reason, though: this template always writes the *static* configured
+  image name, and this server's real `DEFAULT_IMAGE` is a *dated* build
+  (`mint-22.3-xfce-client-2026-08-26-2`) — running `configure_ltsp` here
+  would still clobber that. Only run it against a server whose
+  `DEFAULT_IMAGE` is meant to track the static name (the lab's `ltsp-server`
+  does); use `set_default_image` for anything already live on a dated name.
 - Two real bugs found building the actual production image, both now fixed
   and covered by regression tests: `run_ltsp_image` once passed a dated
   name to `ltsp image` while the raw source was still written under the
@@ -402,6 +414,48 @@ Recording these too, same reason as above.
    failure (`git` needing `liberror-perl`). Fixed by calling
    `common.apt_update(ctx)` in `plans.py::_mirrors_and_upgrade` right after
    `set_mirrors`, before `install_prerequisites`.
+5. **`stages.py::_entry_point()` fell back to a hardcoded
+   `/usr/local/bin/ltsp-setup`** when `shutil.which("ltsp-setup")` failed to
+   resolve it — which it reliably does under `sudo`, whose `secure_path`
+   strips a project-local venv's `bin/` off `PATH` even when the invoking
+   shell had it there. Every venv-based install (this project's own
+   documented setup) hit this the first time the boot-time resume unit
+   fired after a reboot: `203/EXEC`, nothing left to resume. Fixed to fall
+   back to the console script next to `sys.executable` instead, which is
+   unaffected by `PATH`. Caught running the real server plan end-to-end in
+   the lab for the first time (2026-08-26).
+6. **`image import-raw` built the squashfs under the wrong name.**
+   `import_raw_image` moves the raw source into place under the *static*
+   configured `client_template.image_name`, but the CLI command then called
+   `run_ltsp_image(ctx)` with no argument, which defaults to
+   `dated_image_name(ctx)` — despite `run_ltsp_image`'s own docstring saying
+   the lab's cross-machine workflow "passes nothing so it falls back to the
+   static configured name." `ltsp image` would look for a source file that
+   was never written and fail with "Image does not exist." Fixed by passing
+   the static name through explicitly. Caught trying to actually run the
+   lab's cross-machine image-build workflow for the first time (2026-08-26).
+7. **`data/ltsp.conf` only ever rendered a `[server]` section** —
+   `[clients]` (`FSTAB_HOME`, `LIGHTDM_CONF`, `POST_INIT_CUPS`,
+   `POST_INIT_NOCUPSD`) and `NFS_HOME=1` were missing entirely, even though
+   the real production server has had all of them for a while (added by
+   hand, never ported back — see the `configure_ltsp` caution above). Found
+   because the lab's `pxe-test` client showed LightDM's full scrollable
+   user-list greeter (a few hundred real names is unusable) instead of a
+   plain username prompt. Fixed by adding both to the template
+   (2026-08-26).
+8. **`configure_ltsp` ran `ltsp nfs` *before* writing `ltsp.conf`.** `ltsp
+   nfs` reads `NFS_HOME` from `ltsp.conf` to decide whether to uncomment
+   the `/home` export in `/etc/exports.d/ltsp-nfs.exports` (`man
+   ltsp-nfs`) — run first, it only ever sees the *previous* content, so
+   adding `NFS_HOME=1` (bug 7, above) silently never took effect. Same
+   class of bug `ltsp ipxe`'s ordering already guarded against
+   (`DEFAULT_IMAGE` needs to exist first); this just missed the equivalent
+   for `nfs`. Confirmed via `exportfs -v` on the lab server: `/home` never
+   appeared until this moved after the write. Fixed by moving `ltsp nfs`
+   to run after the config write (2026-08-26) — meaning **no lab or real
+   run before this fix ever actually had a working NFS-mounted home
+   directory**, only whatever a client's local ephemeral filesystem
+   provided.
 
 ---
 

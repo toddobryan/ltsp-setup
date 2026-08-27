@@ -25,6 +25,38 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
       research into a shared/system-wide extensions directory or baking
       them into the image at build time).
 
+- [ ] **Chrome: cache size + redirect off NFS-mounted home** (flagged again
+      2026-08-26; originally noted in `DECISIONS.md` 2026-08-19 as the
+      concern that motivated the whole NFSv3-vs-SSHFS-vs-NFSv4+Kerberos
+      timing-test question, never resolved). Chrome's cache currently lives
+      inside the NFS-mounted profile directory, so every cache read/write
+      goes over the network — the likely cause of Chrome being slow to
+      open when many students launch it at once, and of unbounded growth
+      eating into each student's NFS-homed quota. Proposed fix: a Chrome
+      managed policy (`/etc/opt/chrome/policies/managed/*.json`) setting
+      `DiskCacheDir` to local/tmpfs storage and `DiskCacheSize` to a fixed
+      cap, while leaving the actual profile (bookmarks, cookies, history)
+      on NFS so it stays persistent across sessions. Not yet implemented or
+      tested. Todd's aside (2026-08-26): wishes this year's old home
+      directories had been sized up (`du -sh`) before `remove-stale`
+      deleted them — would have shown exactly what was eating disk/network.
+      Worth having `students.remove_all()` capture that automatically next
+      time, alongside the file-count announcement it already does per
+      account before deleting.
+
+- [x] **Student home directory permissions** (checked 2026-08-26, real
+      accounts). `useradd -m`'s Debian/Ubuntu defaults (`UMASK=022` +
+      per-user private groups + `adduser.conf`'s `DIR_MODE=0750`) already
+      produce `drwxr-x---` homes — a student not deliberately attacking the
+      system cannot `cd`/`ls` into another student's home at all. Confirmed
+      on real created accounts (`tbelt30`, `v1kakarl30`, `student`,
+      `sysadmin`). One much lower-stakes note: `/home` itself is `0755`
+      (world-listable), so `ls /home` shows every username, just not file
+      contents — not fixed, probably not worth it. This is about casual/
+      accidental access only; deliberate attacks (a student with root on
+      their own client, or their own device on the LTSP network segment)
+      are a separate, harder problem — see `DECISIONS.md`'s NFSv3 section.
+
 - [ ] **xfwm4 window theme: Kokodi** (added 2026-08-26). Wider grab areas
       around window edges than the stock theme, easier to resize windows
       with. `steps/students.py`'s `RESETTABLE_DEFAULTS` now maps
