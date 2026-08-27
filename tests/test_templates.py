@@ -35,6 +35,7 @@ def test_ltsp_conf_sets_default_image() -> None:
     )
     assert "[server]" in text
     assert 'DEFAULT_IMAGE="ltsp-client-template"' in text
+    assert "NFS_HOME=1" in text
 
 
 def test_ltsp_conf_applies_to_clients_not_the_server() -> None:
