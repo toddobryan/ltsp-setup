@@ -322,8 +322,28 @@ def test_import_roster_writes_a_handout_with_the_password_never_logged(
     content = result.handout_path.read_text()
     assert "Amy Adams" in content
     assert "aadams30" in content
+    assert '<span class="group-badge">g1</span>' in content
 
     password = content.split('<span class="label">Password</span><br>')[1].split("<")[0]
     assert len(password) == 8
     assert not any(password in r.message for r in caplog.records)
     assert oct(result.handout_path.stat().st_mode & 0o777) == "0o600"
+
+
+def test_import_roster_handout_shows_none_badge_for_ungrouped_student(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    csv_path = tmp_path / "roster.csv"
+    csv_path.write_text(
+        "\n".join([HEADER, _row("C9 UNMAPPED", "Adams", "Amy", "1001", "2030")])
+    )
+    ctx = _ctx(tmp_path, dry_run=False, course_groups={"C1": "g1"})
+    monkeypatch.setattr(ctx.runner, "passwd_entries", lambda: [])
+    monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+    (tmp_path / "aadams30").mkdir()
+
+    result = roster.import_roster(ctx, csv_path)
+
+    assert result.handout_path is not None
+    content = result.handout_path.read_text()
+    assert '<span class="group-badge none">none</span>' in content

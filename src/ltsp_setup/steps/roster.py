@@ -136,6 +136,20 @@ class RosterImportResult:
     handout_path: Path | None = None
 
 
+def _groups_html(groups: frozenset[str]) -> str:
+    """Small badges naming a student's Unix group(s), for sorting printed
+    cards to the right student -- the whole point of putting them on the
+    handout (Todd, 2026-08-27). A student in no mapped course shows an
+    explicit "none" badge rather than a blank space that reads as an
+    oversight.
+    """
+    if not groups:
+        return '<span class="group-badge none">none</span>'
+    return "".join(
+        f'<span class="group-badge">{html.escape(g)}</span>' for g in sorted(groups)
+    )
+
+
 def _handout_html(created: list[tuple[RosterStudent, str, str]]) -> str:
     cards = "".join(
         templates.render(
@@ -144,6 +158,7 @@ def _handout_html(created: list[tuple[RosterStudent, str, str]]) -> str:
                 "NAME": html.escape(student.display_name),
                 "USERNAME": html.escape(login),
                 "PASSWORD": html.escape(password),
+                "GROUPS": _groups_html(student.groups),
             },
         )
         for student, login, password in created
