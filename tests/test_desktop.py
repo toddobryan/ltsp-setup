@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ltsp_setup.config import Settings
+from ltsp_setup.config import Apps, Settings
 from ltsp_setup.runner import Runner, StepFailed
 from ltsp_setup.stages import Context
 from ltsp_setup.steps import common
@@ -204,3 +204,31 @@ def test_configure_chrome_singleton_cleanup_writes_the_script_and_autostart(
     assert any(
         r.message.startswith(f"write {autostart_target}:") for r in caplog.records
     )
+
+
+def test_configure_chrome_cache_policy_caps_size_and_uses_tmpfs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="ltsp-setup")
+    ctx = Context(Settings(), Runner(dry_run=True))
+
+    common.configure_chrome_cache_policy(ctx)
+
+    target = common.CHROME_POLICY_DIR / "disk-cache.json"
+    [record] = [r for r in caplog.records if r.message.startswith(f"write {target}:")]
+    assert "/dev/shm/chrome-cache-${user_name}" in record.message
+    assert "104857600" in record.message
+
+
+def test_configure_chrome_cache_policy_respects_configured_size(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="ltsp-setup")
+    settings = Settings(apps=Apps(chrome_disk_cache_mb=50))
+    ctx = Context(settings, Runner(dry_run=True))
+
+    common.configure_chrome_cache_policy(ctx)
+
+    target = common.CHROME_POLICY_DIR / "disk-cache.json"
+    [record] = [r for r in caplog.records if r.message.startswith(f"write {target}:")]
+    assert "52428800" in record.message

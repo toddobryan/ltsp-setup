@@ -25,24 +25,12 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
       research into a shared/system-wide extensions directory or baking
       them into the image at build time).
 
-- [ ] **Chrome: cache size + redirect off NFS-mounted home** (flagged again
-      2026-08-26; originally noted in `DECISIONS.md` 2026-08-19 as the
-      concern that motivated the whole NFSv3-vs-SSHFS-vs-NFSv4+Kerberos
-      timing-test question, never resolved). Chrome's cache currently lives
-      inside the NFS-mounted profile directory, so every cache read/write
-      goes over the network — the likely cause of Chrome being slow to
-      open when many students launch it at once, and of unbounded growth
-      eating into each student's NFS-homed quota. Proposed fix: a Chrome
-      managed policy (`/etc/opt/chrome/policies/managed/*.json`) setting
-      `DiskCacheDir` to local/tmpfs storage and `DiskCacheSize` to a fixed
-      cap, while leaving the actual profile (bookmarks, cookies, history)
-      on NFS so it stays persistent across sessions. Not yet implemented or
-      tested. Todd's aside (2026-08-26): wishes this year's old home
-      directories had been sized up (`du -sh`) before `remove-stale`
-      deleted them — would have shown exactly what was eating disk/network.
-      Worth having `students.remove_all()` capture that automatically next
-      time, alongside the file-count announcement it already does per
-      account before deleting.
+- [ ] **`students.remove_all()`: capture home directory size before deleting**
+      (Todd's aside, 2026-08-26). Wishes this year's old home directories had
+      been sized up (`du -sh`) before `remove-stale` deleted them — would
+      have shown exactly what was eating disk/network. Worth adding
+      alongside the file-count announcement it already does per account
+      before deleting.
 
 - [x] **Student home directory permissions** (checked 2026-08-26, real
       accounts). `useradd -m`'s Debian/Ubuntu defaults (`UMASK=022` +
@@ -66,6 +54,25 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
       and keyboard layout. Not yet confirmed against a real fresh login.
 
 ## Done
+
+- [x] **Chrome: cache size + redirect off NFS-mounted home** (2026-08-27).
+      Chrome's cache lived inside the NFS-mounted profile directory, so
+      every cache read/write crossed the network — the likely cause of
+      Chrome being slow to open when several students launch it at once,
+      plus unbounded growth eating into each student's NFS-homed quota.
+      Fixed with a Chrome managed policy
+      (`steps/common.py::configure_chrome_cache_policy`, written to
+      `/etc/opt/chrome/policies/managed/disk-cache.json`): `DiskCacheDir`
+      points at `/dev/shm` (tmpfs, already mounted on every machine, no
+      fstab entry needed) using Chrome's own `${user_name}` policy-variable
+      expansion, so different students who use the same client over time
+      never share a cache directory; `DiskCacheSize` is capped at
+      `apps.chrome_disk_cache_mb` (default 100MB, in `config.py`). Actual
+      profile data (bookmarks, cookies, history) stays on NFS, unaffected —
+      only the cache moves. Originally noted in `DECISIONS.md` 2026-08-19
+      as the concern that motivated the whole NFSv3-vs-SSHFS-vs-NFSv4+
+      Kerberos timing-test question. Not yet confirmed against a real
+      login — needs an image rebuild to reach clients.
 
 - [x] **GNOME keyring / login password mismatch** (2026-08-26). After a
       server-side password change, Chrome (and anything else touching the

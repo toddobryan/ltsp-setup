@@ -94,6 +94,11 @@ class Apps:
     racket_ppa: str = "ppa:plt/racket"
 
     chrome: bool = True
+    # Chrome's cache otherwise lives inside the NFS-mounted profile, so every
+    # cache read/write crosses the network -- likely cause of slow concurrent
+    # cold starts (Todd, 2026-08-26). Capped and moved to tmpfs instead; see
+    # steps/common.py::configure_chrome_cache_policy.
+    chrome_disk_cache_mb: int = 100
     vscode: bool = True
 
     rust: bool = True

@@ -1,0 +1,4 @@
+{
+    "DiskCacheDir": "/dev/shm/chrome-cache-$${user_name}",
+    "DiskCacheSize": $DISK_CACHE_SIZE_BYTES
+}

@@ -12,6 +12,7 @@ SOURCES_LIST = Path("/etc/apt/sources.list.d/official-package-repositories.list"
 DCONF_PROFILE = Path("/etc/dconf/profile/user")
 DCONF_LOCAL_DIR = Path("/etc/dconf/db/local.d")
 AUTOSTART_DIR = Path("/etc/xdg/autostart")
+CHROME_POLICY_DIR = Path("/etc/opt/chrome/policies/managed")
 MIME_DIR = Path("/usr/share/mime")
 MIMEAPPS_LIST = Path("/etc/xdg/mimeapps.list")
 ICON_THEME_ROOT = Path("/usr/share/icons")
@@ -252,4 +253,27 @@ def configure_chrome_singleton_cleanup(ctx: Context) -> None:
     ctx.runner.write(
         AUTOSTART_DIR / "chrome-singleton-cleanup.desktop",
         templates.read("chrome-singleton-cleanup.desktop"),
+    )
+
+
+def configure_chrome_cache_policy(ctx: Context) -> None:
+    """Move Chrome's cache off NFS-mounted home and cap its size.
+
+    The cache otherwise lives inside ~/.config/google-chrome, which is the
+    NFS-mounted profile -- every cache read/write crosses the network, the
+    likely cause of Chrome being slow to open when several students launch
+    it at once, plus unbounded growth eating into each student's NFS-homed
+    quota (flagged 2026-08-26, docs/desktop-polish-todo.md). DiskCacheDir
+    points at /dev/shm (tmpfs, already mounted on every machine, no fstab
+    entry needed) with Chrome's own ${user_name} policy-variable expansion
+    so different students who use the same client over time never share a
+    cache directory. Actual profile data (bookmarks, cookies, history) stays
+    on NFS so it's still persistent across sessions -- only the cache moves.
+    """
+    size_bytes = ctx.settings.apps.chrome_disk_cache_mb * 1024 * 1024
+    ctx.runner.write(
+        CHROME_POLICY_DIR / "disk-cache.json",
+        templates.render(
+            "chrome-cache-policy.json", {"DISK_CACHE_SIZE_BYTES": size_bytes}
+        ),
     )

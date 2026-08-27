@@ -46,6 +46,7 @@ def _desktop(ctx: Context) -> None:
     common.configure_racket_mime(ctx)
     common.configure_session_lock(ctx)
     common.configure_chrome_singleton_cleanup(ctx)
+    common.configure_chrome_cache_policy(ctx)
 
 
 def _skel(ctx: Context) -> None:
