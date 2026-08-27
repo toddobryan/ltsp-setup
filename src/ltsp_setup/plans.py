@@ -30,6 +30,7 @@ def _server_ltsp(ctx: Context) -> None:
     server.install_ltsp(ctx)
     server.configure_ltsp(ctx)
     server.configure_epoptes(ctx)
+    server.configure_admin_shortcuts(ctx)
 
 
 def _server_virt(ctx: Context) -> None:

@@ -15,6 +15,8 @@ from ltsp_setup.steps.common import apt_install, apt_update
 NETPLAN_DIR = Path("/etc/netplan")
 NETPLAN_FILE = NETPLAN_DIR / "01-ltsp.yaml"
 
+ADMIN_BIN = Path("/usr/local/bin")
+
 LTSP_PPA = "ppa:ltsp"
 
 SERVER_PACKAGES = [
@@ -166,6 +168,21 @@ def configure_ltsp(ctx: Context) -> None:
     ctx.runner.run(["ltsp", "nfs"])
     ctx.runner.run(["ltsp", "ipxe"])
     ctx.runner.run(["ltsp", "initrd"])
+
+
+def configure_admin_shortcuts(ctx: Context) -> None:
+    """Install short command-line wrappers for things Todd types often.
+
+    Just `reset-password` for now -- the full
+    `sudo ltsp-setup student reset-password <username> --no-debug --config
+    ...` was worth shortening (2026-08-27). Relies on `/etc/ltsp-setup.toml`
+    existing (one of `config.load`'s own search paths) so the wrapper never
+    needs its own `--config`; that file is a one-time deployment step, not
+    something this tool writes for itself.
+    """
+    ctx.runner.write(
+        ADMIN_BIN / "reset-password", templates.read("reset-password.sh"), mode=0o755
+    )
 
 
 def configure_epoptes(ctx: Context) -> None:
