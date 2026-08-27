@@ -580,12 +580,25 @@ and 25 when asked.
 
 ## Housekeeping still owed
 
-- `docs/how-to-server.md` and `docs/how-to-client.md` are Todd's hand-written
-  notes, moved out of `src/ltsp_setup/data/`. They were the most accurate
-  description of what a real install needs and were the source of truth for
-  the port — several things in the bash scripts were stale relative to them
-  (Racket 8.15 vs 8.18, the dead `ppa:mmk2410` IntelliJ PPA, the old
-  `vscode.list` instead of deb822 `vscode.sources`).
+- **`docs/how-to-server.md` and `docs/how-to-client.md` — deleted
+  2026-08-26.** Todd's hand-written pre-port notes, moved out of
+  `src/ltsp_setup/data/`; they were the most accurate description of what a
+  real install needs and were the source of truth for the port — several
+  things in the bash scripts were stale relative to them (Racket 8.15 vs
+  8.18, the dead `ppa:mmk2410` IntelliJ PPA, the old `vscode.list` instead of
+  deb822 `vscode.sources`). By the time of deletion they were themselves
+  stale relative to the ported tool (Mint 22.2, IntelliJ/PyCharm and the
+  Dvorak keymap both dropped 2026-08-19, no Rust/GIMP/Shotcut/
+  SimpleScreenRecorder, a hardcoded Racket 8.18 download) and fully
+  superseded by `steps/server.py`/`steps/client.py` plus `README.md`'s
+  usage/bootstrap sections — keeping them "updated" would have meant
+  hand-retyping what the code already does, with nothing to keep the two in
+  sync. **Worth revisiting once the tool looks production-ready:** a plain-
+  English "here's what happens and why" narrative walkthrough, written fresh
+  from `steps/server.py`/`steps/client.py`, would still be worth having for
+  onboarding or as a fallback if the tool itself breaks — just not worth
+  maintaining a second, hand-written copy of the same steps while things are
+  still actively changing.
 
 ---
 

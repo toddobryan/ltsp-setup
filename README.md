@@ -71,7 +71,14 @@ ltsp-setup lab build-golden --no-debug
 
 In the installer, the username must be `sysadmin` (or whatever `admin_user`
 says). Everything else can be default. Afterwards, install `openssh-server`,
-shut down, and freeze the disk:
+`git`, and `python3-venv` — none of the three are on the ISO, and all three
+are needed before anything else (SSH access, cloning this repo, and `python3
+-m venv .venv`, which otherwise fails silently with no `.venv/bin/` at all)
+— then shut down and freeze the disk:
+
+```bash
+sudo apt update && sudo apt install -y openssh-server git python3-venv
+```
 
 ```bash
 sudo chmod 444 /var/lib/libvirt/images/mint-22.3-fresh.qcow2
@@ -80,6 +87,19 @@ virsh --connect qemu:///system undefine mint-22.3-fresh
 
 The golden disk is the copy-on-write **backing file** for both VMs, so booting
 it again would corrupt every clone. Undefining the domain prevents that.
+
+**Worth doing before you freeze it, not after:** every clone (server,
+client-template, client) currently repeats the same one-time dance —
+authorize an SSH key for repeated automation access, add a scoped
+`NOPASSWD` sudoers entry, `git clone` this repo, and build the dev venv —
+because a fresh overlay inherits none of it from the golden image. Doing
+all four once here, before freezing, saves redoing them per clone. The SSH
+key and sudo entry are fine to bake in for a lab-only image that's never
+used for the real production install (isolated network, your own
+workstation) — the `git clone` will still need a `git pull &&
+.venv/bin/pip install -e ".[dev]"` on each clone to catch up to whatever's
+changed since the golden was frozen, but at least the clone and venv
+machinery are already there.
 
 Then, as often as you like:
 
