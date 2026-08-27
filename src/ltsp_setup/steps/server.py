@@ -138,13 +138,20 @@ def configure_ltsp(ctx: Context) -> None:
     else is answering DHCP on it.  On a network where the school's own DHCP
     server is also present, proxy DHCP would be the correct choice instead.
 
-    ``ltsp.conf`` has to exist with ``DEFAULT_IMAGE`` set *before*
-    ``ltsp ipxe`` runs, or the generated boot menu has nothing to default
-    to -- confirmed on the first real netboot attempt (2026-08-19), where
-    a built image sat unused because nothing told the menu about it.
+    ``ltsp.conf`` has to exist with ``DEFAULT_IMAGE`` set *before* ``ltsp
+    ipxe`` runs, or the generated boot menu has nothing to default to --
+    confirmed on the first real netboot attempt (2026-08-19), where a built
+    image sat unused because nothing told the menu about it. ``ltsp nfs``
+    has the same requirement for a different setting: it reads ``NFS_HOME``
+    from ``ltsp.conf`` to decide whether to uncomment the ``/home`` export
+    in ``/etc/exports.d/ltsp-nfs.exports`` (``man ltsp-nfs``) -- run before
+    the config is written, it just re-applies whatever was already there,
+    silently leaving ``/home`` unexported. Confirmed via ``exportfs -v``
+    against the lab server (2026-08-26): the export never appeared until
+    this moved after the write. ``ltsp dnsmasq --proxy-dhcp=0`` takes its
+    setting from its own flag, not ``ltsp.conf``, so it's fine where it is.
     """
     ctx.runner.run(["ltsp", "dnsmasq", "--proxy-dhcp=0"])
-    ctx.runner.run(["ltsp", "nfs"])
     ctx.runner.write(
         LTSP_CONF,
         templates.render(
@@ -156,6 +163,7 @@ def configure_ltsp(ctx: Context) -> None:
         ),
         mode=0o660,
     )
+    ctx.runner.run(["ltsp", "nfs"])
     ctx.runner.run(["ltsp", "ipxe"])
     ctx.runner.run(["ltsp", "initrd"])
 
