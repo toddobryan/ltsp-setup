@@ -323,6 +323,25 @@ def image_list(config: ConfigOption = None) -> None:
         )
 
 
+@image_app.command("prune")
+def image_prune(debug: DebugOption = True, config: ConfigOption = None) -> None:
+    """Delete every published image except the one currently live.
+
+    Removes both halves of each stale build -- the squashfs and the
+    kernel/initrd `ltsp ipxe` uses to generate the PXE boot menu -- so an
+    old build can no longer be accidentally netbooted. Reading the
+    published-images directory needs root regardless of --debug (it's
+    root-owned 0700, same as `image list`), so even a preview needs sudo.
+    """
+    _require_root(debug)
+    ctx = _context(debug, config)
+    pruned = image.prune_published_images(ctx)
+    if not pruned:
+        console.print("Nothing to prune -- only the live image is published.")
+        return
+    console.print(f"[bold]{len(pruned)} image(s) removed:[/bold] {', '.join(pruned)}")
+
+
 @image_app.command("status")
 def image_status(config: ConfigOption = None) -> None:
     """Show the client-template VM's current state."""

@@ -31,6 +31,11 @@ SOURCE_IMAGE_DIR = Path("/srv/ltsp")
 # IMAGE_DIR, not something this tool configures.
 PUBLISHED_IMAGE_DIR = Path("/srv/ltsp/images")
 
+# Where `ltsp image` extracts each build's kernel/initrd, and what `ltsp
+# ipxe` actually scans to generate the PXE boot menu -- LTSP's own default
+# TFTP_DIR/ltsp, not something this tool configures.
+TFTP_IMAGE_DIR = Path("/srv/tftp/ltsp")
+
 # How often to poll `virsh domstate` while waiting for a shutdown.
 POLL_INTERVAL_S = 2
 
@@ -361,6 +366,41 @@ def list_published_images(ctx: Context) -> list[str]:
             "Try: sudo ltsp-setup image list"
         ) from exc
     return sorted(names, reverse=True)
+
+
+def prune_published_images(ctx: Context) -> list[str]:
+    """Delete every published image except the one currently live.
+
+    Nothing prunes a build automatically after it's superseded (see
+    ``dated_image_name``), so they accumulate on disk *and* in the PXE
+    boot menu -- a student's client can netboot any of them, not just
+    ``DEFAULT_IMAGE``, until this runs (Todd, 2026-08-27). Removes both
+    halves of each stale build: the squashfs under ``PUBLISHED_IMAGE_DIR``
+    and the kernel/initrd under ``TFTP_IMAGE_DIR`` -- the latter is what
+    ``ltsp ipxe`` actually scans to generate the menu, so pruning only the
+    squashfs half would leave stale entries selectable. Works from the
+    union of both directories' names rather than just one, since a build
+    from before this tool existed may only have one half of the pair.
+
+    Refuses to run if ``DEFAULT_IMAGE`` can't be determined, rather than
+    guess which build is safe to keep.
+    """
+    live = current_default_image(ctx)
+    if live is None:
+        raise StepFailed(
+            f"{LTSP_CONF} has no DEFAULT_IMAGE set -- refusing to guess "
+            "which published image is safe to keep."
+        )
+    published = set(list_published_images(ctx))
+    tftp_names = {p.name for p in ctx.runner.list_dirs(TFTP_IMAGE_DIR)}
+    stale = sorted((published | tftp_names) - {live}, reverse=True)
+
+    for name in stale:
+        ctx.runner.remove([PUBLISHED_IMAGE_DIR / f"{name}.img"])
+        ctx.runner.remove_tree(TFTP_IMAGE_DIR / name)
+    if stale:
+        ctx.runner.run(["ltsp", "ipxe"])
+    return stale
 
 
 def status(ctx: Context) -> str:

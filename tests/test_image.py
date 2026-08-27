@@ -262,3 +262,92 @@ def test_list_published_images_empty_when_dir_missing(
     monkeypatch.setattr(image, "PUBLISHED_IMAGE_DIR", tmp_path / "nope")
     ctx = Context(Settings(), Runner(dry_run=True))
     assert image.list_published_images(ctx) == []
+
+
+def _setup_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, live: str | None
+) -> Context:
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    tftp_dir = tmp_path / "tftp"
+    tftp_dir.mkdir()
+    conf = tmp_path / "ltsp.conf"
+    if live is not None:
+        conf.write_text(f'[server]\nDEFAULT_IMAGE="{live}"\n')
+    else:
+        conf.write_text("[server]\n")
+    monkeypatch.setattr(image, "PUBLISHED_IMAGE_DIR", images_dir)
+    monkeypatch.setattr(image, "TFTP_IMAGE_DIR", tftp_dir)
+    monkeypatch.setattr(image, "LTSP_CONF", conf)
+    return Context(Settings(), Runner(dry_run=False))
+
+
+class TestPrunePublishedImages:
+    def test_deletes_everything_except_the_live_image(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-08-27")
+        for name in ["mint-2026-08-25", "mint-2026-08-26", "mint-2026-08-27"]:
+            (image.PUBLISHED_IMAGE_DIR / f"{name}.img").write_text("x")
+            (image.TFTP_IMAGE_DIR / name).mkdir()
+            (image.TFTP_IMAGE_DIR / name / "vmlinuz").write_text("x")
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            ctx.runner, "run", lambda argv, **kw: calls.append(list(argv))
+        )
+
+        pruned = image.prune_published_images(ctx)
+
+        assert pruned == ["mint-2026-08-26", "mint-2026-08-25"]
+        assert not (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-25.img").exists()
+        assert not (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-26.img").exists()
+        assert not (image.TFTP_IMAGE_DIR / "mint-2026-08-25").exists()
+        assert not (image.TFTP_IMAGE_DIR / "mint-2026-08-26").exists()
+        assert (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-27.img").exists()
+        assert (image.TFTP_IMAGE_DIR / "mint-2026-08-27").exists()
+        assert calls == [["ltsp", "ipxe"]]
+
+    def test_handles_a_build_with_only_one_half_of_the_pair(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A build from before this tool existed may have only a squashfs
+        or only a tftp dir, not both -- pruning must still work off the
+        union of names, not just one directory.
+        """
+        ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-08-27")
+        (image.PUBLISHED_IMAGE_DIR / "squashfs-only.img").write_text("x")
+        (image.TFTP_IMAGE_DIR / "tftp-only").mkdir()
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-27.img").write_text("x")
+        (image.TFTP_IMAGE_DIR / "mint-2026-08-27").mkdir()
+        monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+
+        pruned = image.prune_published_images(ctx)
+
+        assert set(pruned) == {"squashfs-only", "tftp-only"}
+        assert not (image.PUBLISHED_IMAGE_DIR / "squashfs-only.img").exists()
+        assert not (image.TFTP_IMAGE_DIR / "tftp-only").exists()
+
+    def test_does_nothing_when_only_the_live_image_is_published(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-08-27")
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-27.img").write_text("x")
+        (image.TFTP_IMAGE_DIR / "mint-2026-08-27").mkdir()
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            ctx.runner, "run", lambda argv, **kw: calls.append(list(argv))
+        )
+
+        pruned = image.prune_published_images(ctx)
+
+        assert pruned == []
+        assert calls == []  # ltsp ipxe not re-run when nothing changed
+
+    def test_raises_when_default_image_is_not_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _setup_prune(tmp_path, monkeypatch, live=None)
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-27.img").write_text("x")
+
+        with pytest.raises(StepFailed, match="DEFAULT_IMAGE"):
+            image.prune_published_images(ctx)
