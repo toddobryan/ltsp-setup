@@ -342,7 +342,12 @@ def image_import_raw(
     _require_root(debug)
     ctx = _context(debug, config)
     image.import_raw_image(ctx, Path(source))
-    image.run_ltsp_image(ctx)
+    # import_raw_image just moved the raw source into place under the
+    # static configured name (not a dated one) -- run_ltsp_image must be
+    # told that explicitly, since its own no-argument default is
+    # dated_image_name(), which would look for a source file that was
+    # never written and fail with "Image does not exist".
+    image.run_ltsp_image(ctx, ctx.settings.client_template.image_name)
 
 
 # -------------------------------------------------------------- student
