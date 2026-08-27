@@ -183,8 +183,21 @@ def disable_boot_unit(runner: Runner) -> None:
 
 
 def _entry_point() -> str:
-    """Absolute path to the installed ``ltsp-setup`` command."""
+    """Absolute path to the installed ``ltsp-setup`` command.
+
+    Tries PATH first, but falls back to the console script next to this
+    interpreter rather than a hardcoded guess -- this project installs into
+    a project-local venv (see CLAUDE.md), and ``sudo``'s ``secure_path``
+    strips a venv's ``bin/`` off PATH even when the invoking shell had it,
+    so ``which`` alone finds nothing for the common case of running
+    ``sudo .venv/bin/ltsp-setup server start`` directly. ``sys.executable``
+    is unaffected by PATH, so this works regardless.
+    """
+    import sys
     from shutil import which
 
     found = which("ltsp-setup")
-    return found or "/usr/local/bin/ltsp-setup"
+    if found:
+        return found
+    sibling = Path(sys.executable).parent / "ltsp-setup"
+    return str(sibling) if sibling.exists() else "/usr/local/bin/ltsp-setup"
