@@ -113,6 +113,12 @@ class Apps:
     shotcut: bool = True
     simplescreenrecorder: bool = True
 
+    # Used by a separate Claude session's intro-to-Linux material
+    # (Todd, 2026-08-27).
+    tree: bool = True
+    cowsay: bool = True
+    figlet: bool = True
+
     extra_packages: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:

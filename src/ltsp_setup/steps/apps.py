@@ -38,6 +38,12 @@ def install_all(ctx: Context) -> None:
         install_shotcut(ctx)
     if apps.simplescreenrecorder:
         install_simplescreenrecorder(ctx)
+    if apps.tree:
+        install_tree(ctx)
+    if apps.cowsay:
+        install_cowsay(ctx)
+    if apps.figlet:
+        install_figlet(ctx)
     if apps.extra_packages:
         apt_install(ctx, list(apps.extra_packages))
 
@@ -199,3 +205,18 @@ def install_shotcut(ctx: Context) -> None:
 def install_simplescreenrecorder(ctx: Context) -> None:
     """Install SimpleScreenRecorder, for the AP project's required video demos."""
     apt_install(ctx, ["simplescreenrecorder"])
+
+
+def install_tree(ctx: Context) -> None:
+    """Install tree, used by the intro-to-Linux material."""
+    apt_install(ctx, ["tree"])
+
+
+def install_cowsay(ctx: Context) -> None:
+    """Install cowsay, used by the intro-to-Linux material."""
+    apt_install(ctx, ["cowsay"])
+
+
+def install_figlet(ctx: Context) -> None:
+    """Install figlet, used by the intro-to-Linux material."""
+    apt_install(ctx, ["figlet"])
