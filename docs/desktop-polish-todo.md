@@ -16,6 +16,11 @@ instead — see `docs/DECISIONS.md`, "Student default configuration".
 
 ## Open
 
+- [ ] **Add `ncal` to the client apps** (Todd, 2026-08-27). Needed for the
+      "Getting to know Linux" assignment, which references it directly.
+      Same pattern as `tree`/`cowsay`/`figlet` (`config.py`'s `Apps`,
+      `steps/apps.py`).
+
 - [ ] **VS Code: install a standard set of extensions globally**, so every
       student has them without needing marketplace/internet access
       individually. Two open questions: which extensions (not yet

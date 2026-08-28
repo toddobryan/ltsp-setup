@@ -582,9 +582,12 @@ Recording these too, same reason as above.
   into first, given it's specifically outside district infrastructure.
 - **Overnight rebuild-and-reimage cron job.** `ltsp-setup image build`
   (`steps/image.py::build_image`) is the single re-runnable command this
-  would call, but the "boot the template, update its packages, shut it back
-  down" half doesn't exist yet — Todd wants that added later, once the
-  create/build split above has actually been exercised on real hardware.
+  would call. The precondition here — the create/build split exercised on
+  real hardware — is now satisfied (2026-08-27, several real rebuilds this
+  week). Still deferred: the "boot the template, update its packages, shut
+  it back down" half doesn't exist yet. See `docs/todo.md` for the two
+  concrete open items this split into (an interactive edit-and-rebuild
+  command, then the unattended cron version of it).
 - **Chrome's stale singleton lockfile — fixed 2026-08-26, no longer
   deferred.** Real recurring problem last school year (reported
   2026-08-20): if a student's session ends uncleanly — powering off the
