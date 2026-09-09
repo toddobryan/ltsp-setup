@@ -203,6 +203,12 @@ class ClientTemplate:
     repo_url: str = "https://github.com/toddobryan/ltsp-setup.git"
     # How long to wait for the template to boot far enough to accept SSH.
     boot_timeout_s: int = 300
+    # Private key to reach the template with. Empty means the admin user's
+    # own ~/.ssh/id_ed25519, which is what the template authorizes. Named
+    # explicitly rather than left to ssh's defaults because `image refresh`
+    # runs under sudo, and root's ~/.ssh has no key in it at all -- which is
+    # exactly how this failed the first time (2026-09-09).
+    ssh_key: str = ""
 
 
 @dataclass(frozen=True)

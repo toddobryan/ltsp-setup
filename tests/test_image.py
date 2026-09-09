@@ -377,6 +377,39 @@ class TestUpdateClientTemplate:
             if argv[0] == "ssh":
                 assert "BatchMode=yes" in argv
 
+    def test_ssh_names_the_admin_users_key_explicitly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression test: everything here runs under sudo, so leaving the
+        identity to ssh's defaults means root's empty ~/.ssh and an instant
+        "Permission denied (publickey,password)" -- how this failed on its
+        first real run (2026-09-09).
+        """
+        ctx, calls = self._ctx_and_calls(monkeypatch)
+
+        image.update_client_template(ctx, ["mirrors"])
+
+        for argv in calls:
+            if argv[0] == "ssh":
+                assert "-i" in argv
+                assert argv[argv.index("-i") + 1] == "/home/sysadmin/.ssh/id_ed25519"
+
+
+class TestTemplateSshKey:
+    def test_defaults_to_the_admin_users_key(self) -> None:
+        ctx = Context(Settings(admin_user="sysadmin"), Runner(dry_run=True))
+        assert image.template_ssh_key(ctx) == Path("/home/sysadmin/.ssh/id_ed25519")
+
+    def test_configured_key_wins(self) -> None:
+        settings = dataclasses.replace(
+            Settings(),
+            client_template=dataclasses.replace(
+                Settings().client_template, ssh_key="/etc/ltsp-setup/template.key"
+            ),
+        )
+        ctx = Context(settings, Runner(dry_run=True))
+        assert image.template_ssh_key(ctx) == Path("/etc/ltsp-setup/template.key")
+
 
 def test_refresh_image_stops_short_of_publishing(
     monkeypatch: pytest.MonkeyPatch,

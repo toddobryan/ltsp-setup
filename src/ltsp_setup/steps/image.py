@@ -167,9 +167,28 @@ def wait_for_template_ssh(ctx: Context) -> str:
         )
     ctx.runner.announce(f"{ct.vm_name} is at {address}")
 
+    key = template_ssh_key(ctx)
+    if not ctx.runner.exists(key):
+        raise StepFailed(
+            f"No SSH key at {key} to reach {ct.vm_name} with. Point "
+            "client_template.ssh_key at one, or generate it with ssh-keygen "
+            "and authorize it on the template."
+        )
+
     while time.monotonic() < deadline:
-        if _ssh(ctx, address, "true", check=False).returncode == 0:
+        result = _ssh(ctx, address, "true", check=False, capture=True)
+        if result.returncode == 0:
             return address
+        # Refused/unreachable means sshd isn't up yet, so keep waiting. A
+        # rejected key never resolves by waiting, though -- failing straight
+        # away beats repeating the same denial until the timeout.
+        if "Permission denied" in (result.stderr or ""):
+            raise StepFailed(
+                f"{ct.vm_name} ({address}) rejected {key}: "
+                f"{(result.stderr or '').strip()}\n"
+                f"That key has to be in {ctx.settings.admin_user}'s "
+                "authorized_keys on the template."
+            )
         time.sleep(POLL_INTERVAL_S)
     raise StepFailed(
         f"{ct.vm_name} ({address}) did not accept SSH within {ct.boot_timeout_s}s. "
@@ -178,8 +197,29 @@ def wait_for_template_ssh(ctx: Context) -> str:
     )
 
 
+def template_ssh_key(ctx: Context) -> Path:
+    """The private key to reach the template with.
+
+    Defaults to the admin user's own key, which is what the template
+    authorizes (the golden image bakes it in). Named explicitly rather than
+    left to ssh's own defaults because everything here runs under ``sudo``,
+    so ssh would otherwise look in ``/root/.ssh`` and find nothing -- the
+    "Permission denied (publickey,password)" this failed with on its first
+    real run (2026-09-09).
+    """
+    configured = ctx.settings.client_template.ssh_key
+    if configured:
+        return Path(configured).expanduser()
+    return Path("/home") / ctx.settings.admin_user / ".ssh" / "id_ed25519"
+
+
 def _ssh(
-    ctx: Context, address: str, command: str, *, check: bool = True
+    ctx: Context,
+    address: str,
+    command: str,
+    *,
+    check: bool = True,
+    capture: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     """Run one command on the template over SSH, as the admin user.
 
@@ -196,10 +236,13 @@ def _ssh(
             "StrictHostKeyChecking=accept-new",
             "-o",
             "ConnectTimeout=10",
+            "-i",
+            str(template_ssh_key(ctx)),
             f"{ctx.settings.admin_user}@{address}",
             command,
         ],
         check=check,
+        capture=capture,
     )
 
 
