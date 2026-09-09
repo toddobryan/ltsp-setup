@@ -13,7 +13,9 @@ from __future__ import annotations
 import dataclasses
 import os
 import shutil
+import subprocess
 import time
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
@@ -23,6 +25,7 @@ from ltsp_setup.config import Settings
 from ltsp_setup.runner import Runner, StepFailed
 from ltsp_setup.stages import Context
 from ltsp_setup.steps import image
+from ltsp_setup.virt import Libvirt
 
 HOST_TOOLS_AVAILABLE = (
     all(shutil.which(tool) for tool in ("virsh", "virt-install", "qemu-img"))
@@ -262,6 +265,139 @@ def test_list_published_images_empty_when_dir_missing(
     monkeypatch.setattr(image, "PUBLISHED_IMAGE_DIR", tmp_path / "nope")
     ctx = Context(Settings(), Runner(dry_run=True))
     assert image.list_published_images(ctx) == []
+
+
+def _record_calls(ctx: Context, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """Capture every argv the runner is asked to execute, running nothing."""
+    calls: list[list[str]] = []
+
+    def record(
+        argv: Sequence[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append([str(a) for a in argv])
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(ctx.runner, "run", record)
+    return calls
+
+
+class TestDomifaddr:
+    """Parsing `virsh domifaddr` output, which has a header and a blank line
+    around the row that actually matters.
+    """
+
+    SAMPLE = (
+        " Name       MAC address          Protocol     Address\n"
+        "----------------------------------------------------------\n"
+        " vnet0      52:54:00:78:4f:68    ipv4         192.168.122.99/24\n"
+    )
+
+    def _libvirt(self, monkeypatch: pytest.MonkeyPatch, output: str) -> Libvirt:
+        lv = Libvirt("qemu:///system", Runner(dry_run=False))
+        monkeypatch.setattr(lv, "virsh", lambda *a, **kw: output)
+        return lv
+
+    def test_returns_the_address_without_its_prefix(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lv = self._libvirt(monkeypatch, self.SAMPLE)
+        assert lv.domifaddr("template") == "192.168.122.99"
+
+    def test_none_before_the_guest_has_a_lease(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        no_address = (
+            " Name       MAC address          Protocol     Address\n"
+            "----------------------------------------------------------\n"
+        )
+        lv = self._libvirt(monkeypatch, no_address)
+        assert lv.domifaddr("template") is None
+
+    def test_ignores_ipv6_only_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        ipv6 = (
+            " Name       MAC address          Protocol     Address\n"
+            " vnet0      52:54:00:78:4f:68    ipv6         fe80::1/64\n"
+        )
+        lv = self._libvirt(monkeypatch, ipv6)
+        assert lv.domifaddr("template") is None
+
+
+class TestUpdateClientTemplate:
+    """The remote half of `image refresh`, which drives the template over
+    SSH using only sudoers rules it already has.
+    """
+
+    def _ctx_and_calls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[Context, list[list[str]]]:
+        ctx = Context(Settings(), Runner(dry_run=True))
+        calls = _record_calls(ctx, monkeypatch)
+        return ctx, calls
+
+    def _remote_commands(self, calls: list[list[str]]) -> list[str]:
+        return [argv[-1] for argv in calls if argv[0] == "ssh"]
+
+    def test_reclones_bootstraps_runs_stages_then_cleans_up(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx, calls = self._ctx_and_calls(monkeypatch)
+
+        image.update_client_template(ctx, ["mirrors", "apps"])
+
+        commands = self._remote_commands(calls)
+        assert "rm -rf /home/sysadmin/ltsp-setup" in commands[0]
+        assert "git clone" in commands[0]
+        assert commands[1] == "sudo -n /home/sysadmin/ltsp-setup/bootstrap.sh"
+        assert commands[2].endswith("client stage mirrors --no-debug")
+        assert commands[3].endswith("client stage apps --no-debug")
+        assert commands[4].endswith("client cleanup --no-debug")
+
+    def test_every_remote_command_is_passwordless(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Anything needing an interactive sudo password would hang a cron
+        run forever, so every elevated command has to use `sudo -n`.
+        """
+        ctx, calls = self._ctx_and_calls(monkeypatch)
+
+        image.update_client_template(ctx, ["mirrors"])
+
+        for command in self._remote_commands(calls):
+            if "sudo" in command:
+                assert "sudo -n " in command, command
+
+    def test_ssh_never_falls_back_to_a_password_prompt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx, calls = self._ctx_and_calls(monkeypatch)
+
+        image.update_client_template(ctx, ["mirrors"])
+
+        for argv in calls:
+            if argv[0] == "ssh":
+                assert "BatchMode=yes" in argv
+
+
+def test_refresh_image_stops_short_of_publishing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh build must not become live on its own -- "once we're sure it
+    works" is a real gate (Todd, 2026-09-09).
+    """
+    ctx = Context(Settings(), Runner(dry_run=True))
+    calls = _record_calls(ctx, monkeypatch)
+    monkeypatch.setattr(image, "set_default_image", _must_not_be_called)
+    monkeypatch.setattr(image, "prune_published_images", _must_not_be_called)
+
+    image.refresh_image(ctx, ["mirrors"])
+
+    flattened = " ".join(" ".join(argv) for argv in calls)
+    assert "ltsp image --backup 0" in flattened
+    assert "ipxe" not in flattened  # set_default_image's tell
+
+
+def _must_not_be_called(*args: object, **kwargs: object) -> None:
+    raise AssertionError("refresh_image must not publish the build itself")
 
 
 def _setup_prune(

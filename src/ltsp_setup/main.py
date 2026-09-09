@@ -323,6 +323,39 @@ def image_list(config: ConfigOption = None) -> None:
         )
 
 
+@image_app.command("refresh")
+def image_refresh(
+    stage: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--stage",
+            help="Client stage to run on the template before building. Repeat "
+            "for more than one. Defaults to just `mirrors` (apt update and "
+            "upgrade); add `--stage apps` after adding a package, or "
+            "`--stage desktop` after changing a system-wide desktop default.",
+        ),
+    ] = None,
+    debug: DebugOption = True,
+    config: ConfigOption = None,
+) -> None:
+    """Boot the template, bring it up to date, and build a fresh image.
+
+    The whole by-hand routine in one command: start the template VM,
+    re-install this tool on it, run the requested stages, strip the tooling
+    back off, shut it down, and build.
+
+    Stops short of making the build live. Test it first, then run the two
+    commands this prints (`image set-default`, then `image prune`).
+    """
+    _require_root(debug)
+    ctx = _context(debug, config)
+    name = image.refresh_image(ctx, stage or ["mirrors"])
+    console.print(f"[bold green]Built:[/bold green] {name}")
+    console.print("Not live yet. Test it by netbooting a client, then run:")
+    console.print(f"  sudo ltsp-setup image set-default {name} --no-debug")
+    console.print("  sudo ltsp-setup image prune --no-debug")
+
+
 @image_app.command("prune")
 def image_prune(debug: DebugOption = True, config: ConfigOption = None) -> None:
     """Delete every published image except the one currently live.

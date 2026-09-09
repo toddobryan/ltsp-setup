@@ -197,6 +197,13 @@ class ClientTemplate:
     image_name: str = "ltsp-client-template"
     shutdown_timeout_s: int = 120
 
+    # Public HTTPS clone URL. The template has no deploy key and shouldn't
+    # need one -- `image refresh` re-clones the checkout on every run, since
+    # `client cleanup` deletes it again before each build (2026-09-09).
+    repo_url: str = "https://github.com/toddobryan/ltsp-setup.git"
+    # How long to wait for the template to boot far enough to accept SSH.
+    boot_timeout_s: int = 300
+
 
 @dataclass(frozen=True)
 class Students:

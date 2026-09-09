@@ -16,7 +16,9 @@ a cron job) once the template exists.
 from __future__ import annotations
 
 import re
+import subprocess
 import time
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
@@ -120,6 +122,143 @@ def shutdown_client_template(ctx: Context) -> None:
         "forcing it off"
     )
     lv.virsh("destroy", ct.vm_name, check=False)
+
+
+def start_client_template(ctx: Context) -> None:
+    """Boot the template VM, unless it is already running."""
+    ct = ctx.settings.client_template
+    lv = _libvirt(ctx)
+    if not ctx.runner.dry_run and not lv.domain_exists(ct.vm_name):
+        raise StepFailed(
+            f"No client-template VM named {ct.vm_name!r} at {ct.connect_uri}.\n"
+            "Create one first with:  ltsp-setup image create-template --no-debug"
+        )
+    if lv.domstate(ct.vm_name) == "running":
+        ctx.runner.announce(f"{ct.vm_name} is already running")
+        return
+    lv.virsh("start", ct.vm_name)
+
+
+def wait_for_template_ssh(ctx: Context) -> str:
+    """Wait for the template to boot and start accepting SSH, and return its IP.
+
+    Two separate waits, because they fail differently: the VM has no address
+    at all until its DHCP client comes up, and then sshd isn't listening for
+    a while after that. Polls rather than sleeping a fixed amount, since a
+    template that has packages to configure on boot is much slower than one
+    that doesn't.
+    """
+    ct = ctx.settings.client_template
+    lv = _libvirt(ctx)
+    if ctx.runner.dry_run:
+        return "<template-ip>"
+
+    deadline = time.monotonic() + ct.boot_timeout_s
+    address: str | None = None
+    while time.monotonic() < deadline:
+        address = lv.domifaddr(ct.vm_name)
+        if address:
+            break
+        time.sleep(POLL_INTERVAL_S)
+    if not address:
+        raise StepFailed(
+            f"{ct.vm_name} had no IPv4 address within {ct.boot_timeout_s}s. "
+            f"Check it booted: virsh --connect {ct.connect_uri} console {ct.vm_name}"
+        )
+    ctx.runner.announce(f"{ct.vm_name} is at {address}")
+
+    while time.monotonic() < deadline:
+        if _ssh(ctx, address, "true", check=False).returncode == 0:
+            return address
+        time.sleep(POLL_INTERVAL_S)
+    raise StepFailed(
+        f"{ct.vm_name} ({address}) did not accept SSH within {ct.boot_timeout_s}s. "
+        f"This needs {ctx.settings.admin_user}'s key already authorized on the "
+        "template, which the golden image is meant to bake in -- see README."
+    )
+
+
+def _ssh(
+    ctx: Context, address: str, command: str, *, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run one command on the template over SSH, as the admin user.
+
+    ``BatchMode=yes`` so a missing key fails immediately instead of hanging
+    on a password prompt that nothing is there to answer -- this has to work
+    unattended, from cron, in the middle of the night.
+    """
+    return ctx.runner.run(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "ConnectTimeout=10",
+            f"{ctx.settings.admin_user}@{address}",
+            command,
+        ],
+        check=check,
+    )
+
+
+def update_client_template(ctx: Context, stages: Sequence[str]) -> None:
+    """Re-install this tool on the template, run stages there, then clean up.
+
+    The template deliberately doesn't keep a checkout or venv between builds
+    (``client cleanup`` deletes both, since its whole disk becomes the
+    shipped image), so every run re-clones and re-bootstraps from scratch.
+    That costs a minute and means the template always runs exactly what's on
+    the repo's default branch, never a stale local copy -- the very bug that
+    silently shipped an image without the session-lock work in it
+    (2026-08-26, see docs/desktop-polish-todo.md).
+
+    Everything here runs passwordlessly through sudoers rules the template
+    already has (``bootstrap.sh`` and ``/usr/local/bin/ltsp-setup *``), so
+    no new root access has to be granted -- which matters more than usual
+    here, because any sudoers change on the template ships to every thin
+    client.
+    """
+    ct = ctx.settings.client_template
+    address = wait_for_template_ssh(ctx)
+    checkout = f"/home/{ctx.settings.admin_user}/ltsp-setup"
+
+    ctx.runner.announce(f"Installing {ct.repo_url} on {ct.vm_name}")
+    _ssh(ctx, address, f"rm -rf {checkout} && git clone -q {ct.repo_url} {checkout}")
+    _ssh(ctx, address, f"sudo -n {checkout}/bootstrap.sh")
+
+    for stage in stages:
+        ctx.runner.announce(f"Running the client {stage!r} stage on {ct.vm_name}")
+        _ssh(
+            ctx,
+            address,
+            f"sudo -n /usr/local/bin/ltsp-setup client stage {stage} --no-debug",
+        )
+
+    ctx.runner.announce(f"Removing this tool from {ct.vm_name} again")
+    _ssh(ctx, address, "sudo -n /usr/local/bin/ltsp-setup client cleanup --no-debug")
+
+
+def refresh_image(ctx: Context, stages: Sequence[str]) -> str:
+    """Boot the template, bring it up to date, and build a fresh image.
+
+    The whole by-hand routine as one command (Todd, 2026-09-09): start the
+    VM, re-install this tool on it, run the stages that matter, strip the
+    tooling back off, shut it down, and build.
+
+    Deliberately stops there. Making the build live (``set_default_image``)
+    and deleting what it supersedes (``prune_published_images``) stay
+    separate, because "once we're sure it works" is a real gate -- a build
+    that boots to a broken desktop should not be able to become the default
+    without a human having looked at it first.
+
+    Returns:
+        The name this build was published under.
+    """
+    start_client_template(ctx)
+    update_client_template(ctx, stages)
+    return build_image(ctx)
 
 
 def raw_image_path(ctx: Context, image_name: str | None = None) -> Path:

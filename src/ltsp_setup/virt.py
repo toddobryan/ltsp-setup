@@ -71,6 +71,24 @@ class Libvirt:
             return "shut off"
         return self.virsh("domstate", name, check=False)
 
+    def domifaddr(self, name: str) -> str | None:
+        """The VM's first IPv4 address, or None if it doesn't have one yet.
+
+        A running VM has no address until its guest DHCP client has actually
+        come up, so this returns None for a while after ``virsh start`` --
+        callers poll. Returns a placeholder during a dry run so the printed
+        commands that use it still read sensibly.
+        """
+        if self.runner.dry_run:
+            return "<template-ip>"
+        output = self.virsh("domifaddr", name, check=False)
+        for line in output.splitlines():
+            fields = line.split()
+            # e.g. "vnet0  52:54:00:78:4f:68  ipv4  192.168.122.99/24"
+            if len(fields) >= 4 and fields[2] == "ipv4":
+                return fields[3].split("/")[0]
+        return None
+
     def network_exists(self, name: str) -> bool:
         """True if a libvirt network of this name is defined."""
         if self.runner.dry_run:

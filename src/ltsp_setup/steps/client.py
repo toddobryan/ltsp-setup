@@ -28,6 +28,12 @@ CLIENT_PACKAGES = ["ltsp", "epoptes-client", "spice-vdagent"]
 # projects, not a throwaway template VM checkout (2026-08-26).
 VENV_DIR = Path("/opt/ltsp-setup")
 
+# bootstrap.sh symlinks the venv's entry point here. Removing the venv
+# without removing this leaves a dangling symlink in the shipped image
+# (found 2026-09-09) -- harmless, but it's dead weight, and `image refresh`
+# re-runs bootstrap.sh anyway, which recreates it.
+ENTRY_POINT_LINK = Path("/usr/local/bin/ltsp-setup")
+
 
 def install_ltsp(ctx: Context) -> None:
     """Install the client half of LTSP from the LTSP PPA."""
@@ -51,3 +57,4 @@ def cleanup_setup_tooling(ctx: Context) -> None:
     checkout_dir = Path("/home") / ctx.settings.admin_user / "ltsp-setup"
     ctx.runner.remove_tree(checkout_dir)
     ctx.runner.remove_tree(VENV_DIR)
+    ctx.runner.remove([ENTRY_POINT_LINK])
