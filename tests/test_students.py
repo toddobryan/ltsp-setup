@@ -593,3 +593,429 @@ def test_apply_defaults_all_compares_every_account_against_the_same_snapshot(
             if name == "keyboard-layout-default.xml"
         )
         assert f'value="{v2_variant}"' in (tmp_path / username / rel).read_text()
+
+
+# ---------------------------------------------------------------------- push_files
+
+
+def _sources(tmp_path: Path) -> list[Path]:
+    """The two handout files push-lab.sh used to carry, one of them binary."""
+    source_dir = tmp_path / "from-todd"
+    source_dir.mkdir()
+    starter = source_dir / "lab01-starter.odt"
+    starter.write_bytes(b"PK\x03\x04 odt container")
+    activity = source_dir / "lab01-activity.html"
+    activity.write_text("<h1>Lab 01</h1>\n")
+    return [starter, activity]
+
+
+def _push_ctx(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    dry_run: bool,
+    accounts: list[tuple[str, int]],
+    group_members: dict[str, list[str]] | None = None,
+) -> tuple[Context, list[tuple[Path, str, str]]]:
+    """A context whose account, group and ownership lookups are all faked.
+
+    Returns the context and a list that records every chown, since a test
+    running as an ordinary user can't chown to accounts that don't exist.
+    """
+    home_root = tmp_path / "home"
+    home_root.mkdir()
+    ctx = _ctx(home_root, dry_run=dry_run)
+    members = group_members or {}
+    chowns: list[tuple[Path, str, str]] = []
+
+    monkeypatch.setattr(ctx.runner, "passwd_entries", lambda: accounts)
+    monkeypatch.setattr(ctx.runner, "group_exists", lambda name: name in members)
+    monkeypatch.setattr(ctx.runner, "group_members", lambda name: members.get(name, []))
+    monkeypatch.setattr(ctx.runner, "primary_group", lambda username: username)
+    monkeypatch.setattr(
+        ctx.runner,
+        "chown",
+        lambda path, user, group=None: chowns.append((path, user, group or user)),
+    )
+    return ctx, chowns
+
+
+def _make_home(ctx: Context, username: str) -> Path:
+    home = ctx.settings.students.home_root / username
+    home.mkdir(parents=True)
+    return home
+
+
+def test_push_files_copies_every_source_to_every_student(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, chowns = _push_ctx(
+        tmp_path,
+        monkeypatch,
+        dry_run=False,
+        accounts=[("aadams27", 1003), ("zwhite28", 1004)],
+    )
+    for name in ("aadams27", "zwhite28"):
+        _make_home(ctx, name)
+    sources = _sources(tmp_path)
+
+    result = students.push_files(ctx, sources)
+
+    for name in ("aadams27", "zwhite28"):
+        desktop = ctx.settings.students.home_root / name / "Desktop"
+        assert (desktop / "lab01-starter.odt").read_bytes() == sources[0].read_bytes()
+        assert (desktop / "lab01-activity.html").read_text() == "<h1>Lab 01</h1>\n"
+    assert sorted(result.pushed) == [
+        "aadams27: lab01-activity.html",
+        "aadams27: lab01-starter.odt",
+        "zwhite28: lab01-activity.html",
+        "zwhite28: lab01-starter.odt",
+    ]
+    assert result.skipped == []
+
+
+def test_push_files_gives_every_file_and_directory_to_the_student(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A handout the student can't edit or delete is worse than no handout."""
+    ctx, chowns = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    _make_home(ctx, "aadams27")
+    sources = _sources(tmp_path)
+
+    students.push_files(ctx, sources)
+
+    desktop = ctx.settings.students.home_root / "aadams27" / "Desktop"
+    assert chowns == [
+        (desktop, "aadams27", "aadams27"),
+        (desktop / "lab01-starter.odt", "aadams27", "aadams27"),
+        (desktop / "lab01-activity.html", "aadams27", "aadams27"),
+    ]
+    for name in ("lab01-starter.odt", "lab01-activity.html"):
+        assert (desktop / name).stat().st_mode & 0o777 == 0o644
+
+
+def test_push_files_dry_run_copies_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=True, accounts=[("aadams27", 1003)]
+    )
+    _make_home(ctx, "aadams27")
+
+    result = students.push_files(ctx, _sources(tmp_path))
+
+    assert not (ctx.settings.students.home_root / "aadams27" / "Desktop").exists()
+    assert result.pushed == [
+        "aadams27: lab01-starter.odt",
+        "aadams27: lab01-activity.html",
+    ]
+
+
+def test_push_files_leaves_an_identical_file_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, chowns = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    home = _make_home(ctx, "aadams27")
+    sources = _sources(tmp_path)
+    desktop = home / "Desktop"
+    desktop.mkdir()
+    (desktop / "lab01-activity.html").write_text("<h1>Lab 01</h1>\n")
+
+    result = students.push_files(ctx, sources)
+
+    assert result.unchanged == ["aadams27: lab01-activity.html"]
+    assert result.pushed == ["aadams27: lab01-starter.odt"]
+    assert chowns == [(desktop / "lab01-starter.odt", "aadams27", "aadams27")]
+
+
+def test_push_files_never_writes_over_a_students_own_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The case the renaming exists for: the student did the lab *in* the
+    file they were given, under the same name.
+    """
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    home = _make_home(ctx, "aadams27")
+    sources = _sources(tmp_path)
+    desktop = home / "Desktop"
+    desktop.mkdir()
+    theirs = desktop / "lab01-activity.html"
+    theirs.write_text("<h1>Lab 01</h1>\n<p>my answers</p>\n")
+
+    result = students.push_files(ctx, sources)
+
+    assert theirs.read_text() == "<h1>Lab 01</h1>\n<p>my answers</p>\n"
+    assert (desktop / "lab01-activity-2.html").read_text() == "<h1>Lab 01</h1>\n"
+    assert sorted(result.pushed) == [
+        "aadams27: lab01-activity-2.html",
+        "aadams27: lab01-starter.odt",
+    ]
+    assert result.skipped == []
+
+
+def test_push_files_numbers_before_the_extension(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """So the copy still opens in the right application when double-clicked."""
+    assert students._suffixed("lab01-activity.html", 2) == "lab01-activity-2.html"
+    assert students._suffixed("notes.tar.gz", 3) == "notes-3.tar.gz"
+    assert students._suffixed("README", 2) == "README-2"
+
+
+def test_push_files_re_run_does_not_pile_up_more_numbered_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pushing the same file twice to a student who customised theirs leaves
+    one numbered copy, not one per run.
+    """
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    home = _make_home(ctx, "aadams27")
+    sources = _sources(tmp_path)
+    desktop = home / "Desktop"
+    desktop.mkdir()
+    (desktop / "lab01-activity.html").write_text("my answers\n")
+
+    students.push_files(ctx, sources)
+    result = students.push_files(ctx, sources)
+
+    assert not (desktop / "lab01-activity-3.html").exists()
+    assert sorted(result.unchanged) == [
+        "aadams27: lab01-activity-2.html",
+        "aadams27: lab01-starter.odt",
+    ]
+    assert result.pushed == []
+
+
+def test_push_files_climbs_past_several_existing_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    home = _make_home(ctx, "aadams27")
+    sources = _sources(tmp_path)
+    desktop = home / "Desktop"
+    desktop.mkdir()
+    (desktop / "lab01-activity.html").write_text("draft one\n")
+    (desktop / "lab01-activity-2.html").write_text("draft two\n")
+
+    result = students.push_files(ctx, sources)
+
+    assert (desktop / "lab01-activity-3.html").read_text() == "<h1>Lab 01</h1>\n"
+    assert "aadams27: lab01-activity-3.html" in result.pushed
+
+
+def test_push_files_replaces_in_place_when_told_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    home = _make_home(ctx, "aadams27")
+    sources = _sources(tmp_path)
+    desktop = home / "Desktop"
+    desktop.mkdir()
+    (desktop / "lab01-activity.html").write_text("stale draft\n")
+
+    result = students.push_files(ctx, sources, overwrite=True)
+
+    assert (desktop / "lab01-activity.html").read_text() == "<h1>Lab 01</h1>\n"
+    assert not (desktop / "lab01-activity-2.html").exists()
+    assert result.replaced == ["aadams27: lab01-activity.html"]
+    assert result.pushed == ["aadams27: lab01-starter.odt"]
+
+
+def test_overwrite_fixes_the_named_file_even_when_a_numbered_copy_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An earlier run left the new version at -2 beside the student's own.
+    --overwrite is then asking about the named file, so an identical -2 is
+    not a reason to call the job done.
+    """
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    home = _make_home(ctx, "aadams27")
+    sources = _sources(tmp_path)
+    desktop = home / "Desktop"
+    desktop.mkdir()
+    (desktop / "lab01-activity.html").write_text("my answers\n")
+    (desktop / "lab01-activity-2.html").write_text("<h1>Lab 01</h1>\n")
+
+    result = students.push_files(ctx, sources, overwrite=True)
+
+    assert (desktop / "lab01-activity.html").read_text() == "<h1>Lab 01</h1>\n"
+    assert result.replaced == ["aadams27: lab01-activity.html"]
+
+
+def test_push_files_gives_up_rather_than_adding_a_hundredth_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    home = _make_home(ctx, "aadams27")
+    activity = _sources(tmp_path)[1]
+    desktop = home / "Desktop"
+    desktop.mkdir()
+    (desktop / "lab01-activity.html").write_text("different 1\n")
+    for index in range(2, students.MAX_SUFFIXED_COPIES + 1):
+        (desktop / f"lab01-activity-{index}.html").write_text(f"different {index}\n")
+
+    with pytest.raises(StepFailed, match="copies of lab01-activity.html"):
+        students.push_files(ctx, [activity])
+
+
+def test_push_files_to_a_group_covers_primary_and_secondary_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _push_ctx(
+        tmp_path,
+        monkeypatch,
+        dry_run=False,
+        accounts=[("aadams27", 1003), ("zwhite28", 1004), ("bbrown29", 1005)],
+        group_members={"r1": ["aadams27", "zwhite28"]},
+    )
+    for name in ("aadams27", "zwhite28", "bbrown29"):
+        _make_home(ctx, name)
+
+    result = students.push_files(ctx, _sources(tmp_path), group="r1")
+
+    assert not (ctx.settings.students.home_root / "bbrown29" / "Desktop").exists()
+    assert sorted(result.pushed) == [
+        "aadams27: lab01-activity.html",
+        "aadams27: lab01-starter.odt",
+        "zwhite28: lab01-activity.html",
+        "zwhite28: lab01-starter.odt",
+    ]
+
+
+def test_push_files_to_a_group_skips_the_teachers_own_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Todd is in his own sections' groups; a push aimed at a section
+    shouldn't drop files on his desktop.
+    """
+    ctx, _ = _push_ctx(
+        tmp_path,
+        monkeypatch,
+        dry_run=False,
+        accounts=[("aadams27", 1003), ("toddobryan", 1001)],
+        group_members={"r1": ["aadams27", "toddobryan"]},
+    )
+    _make_home(ctx, "aadams27")
+    _make_home(ctx, "toddobryan")
+
+    result = students.push_files(ctx, _sources(tmp_path), group="r1")
+
+    assert not (ctx.settings.students.home_root / "toddobryan" / "Desktop").exists()
+    assert result.skipped == [("toddobryan", "not a student account")]
+
+
+def test_push_files_raises_on_a_group_that_does_not_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    _make_home(ctx, "aadams27")
+
+    with pytest.raises(StepFailed, match="No such group: r9"):
+        students.push_files(ctx, _sources(tmp_path), group="r9")
+
+
+def test_push_files_pushes_nothing_when_a_source_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Checked up front, so a typo'd filename can't leave half a class with
+    one of the two files.
+    """
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    _make_home(ctx, "aadams27")
+    sources = _sources(tmp_path) + [tmp_path / "from-todd" / "lab01-typo.html"]
+
+    with pytest.raises(StepFailed, match="lab01-typo.html"):
+        students.push_files(ctx, sources)
+
+    assert not (ctx.settings.students.home_root / "aadams27" / "Desktop").exists()
+
+
+def test_push_files_skips_an_account_with_no_home_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _push_ctx(
+        tmp_path,
+        monkeypatch,
+        dry_run=False,
+        accounts=[("aadams27", 1003), ("nohome30", 1006)],
+    )
+    _make_home(ctx, "aadams27")
+
+    result = students.push_files(ctx, _sources(tmp_path))
+
+    assert result.skipped == [
+        ("nohome30", f"no home directory at {ctx.settings.students.home_root}/nohome30")
+    ]
+    assert len(result.pushed) == 2
+
+
+def test_push_files_honours_a_configured_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home_root = tmp_path / "home"
+    home_root.mkdir()
+    ctx = Context(
+        Settings(students=Students(home_root=home_root, push_dest=Path("handouts/cs"))),
+        Runner(dry_run=False),
+    )
+    monkeypatch.setattr(ctx.runner, "passwd_entries", lambda: [("aadams27", 1003)])
+    monkeypatch.setattr(ctx.runner, "primary_group", lambda username: username)
+    monkeypatch.setattr(ctx.runner, "chown", lambda path, user, group=None: None)
+    (home_root / "aadams27").mkdir()
+
+    students.push_files(ctx, _sources(tmp_path))
+
+    assert (home_root / "aadams27" / "handouts" / "cs" / "lab01-starter.odt").is_file()
+
+
+def test_push_files_takes_a_destination_per_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    home = _make_home(ctx, "aadams27")
+
+    students.push_files(ctx, _sources(tmp_path), dest=Path("Documents/labs"))
+
+    assert (home / "Documents" / "labs" / "lab01-starter.odt").is_file()
+    assert not (home / "Desktop").exists()
+
+
+def test_push_files_refuses_a_destination_that_escapes_the_home_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """This path is joined onto every targeted home directory, so a '..' in
+    it is a way to write across the server by typo.
+    """
+    ctx, _ = _push_ctx(
+        tmp_path, monkeypatch, dry_run=False, accounts=[("aadams27", 1003)]
+    )
+    _make_home(ctx, "aadams27")
+    sources = _sources(tmp_path)
+
+    with pytest.raises(StepFailed, match=r"can't contain '\.\.'"):
+        students.push_files(ctx, sources, dest=Path("../../etc"))
+
+    with pytest.raises(StepFailed, match=r"can't start with '/'"):
+        students.push_files(ctx, sources, dest=Path("/etc/skel"))

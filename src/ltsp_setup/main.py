@@ -91,6 +91,23 @@ def _require_root(debug: bool) -> None:
         )
 
 
+def _require_root_to_look(command: str) -> None:
+    """Refuse even a dry run unless we are root.
+
+    For commands whose *preview* has to read inside student home
+    directories, which are mode 0750 and owned by the student: as anyone
+    but root, the dry run doesn't produce a cautious preview, it dies on
+    the first account with a PermissionError. Better to say so up front
+    than to hand back a traceback (2026-09-14).
+    """
+    if os.geteuid() != 0:
+        raise typer.BadParameter(
+            f"'{command}' has to look inside student home directories, which "
+            f"only root can do -- so even a dry run needs sudo. Try: "
+            f"sudo ltsp-setup {command} ..."
+        )
+
+
 RebootOption = Annotated[
     bool,
     typer.Option(
@@ -540,6 +557,78 @@ def student_create_from_roster(
         console.print(f"Handout: {result.handout_path}")
     elif not result.created and not result.skipped_existing:
         console.print("No students in that roster.")
+
+
+@student_app.command("push")
+def student_push(
+    files: Annotated[
+        list[Path],
+        typer.Argument(help="Files to copy into each student's handout directory."),
+    ],
+    group: Annotated[
+        Optional[str],
+        typer.Option("--group", help="Push to one Unix group, e.g. a section: r1."),
+    ] = None,
+    everyone: Annotated[
+        bool,
+        typer.Option("--all", help="Push to every real student account instead."),
+    ] = False,
+    dest: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--dest",
+            help="Where to put them inside each home directory, relative to "
+            "it. Defaults to students.push_dest from config (Desktop).",
+        ),
+    ] = None,
+    overwrite: Annotated[
+        bool,
+        typer.Option(
+            "--overwrite",
+            help="Write over a file of the same name instead of adding a "
+            "numbered copy beside it. Destroys student work if they did "
+            "theirs in that file.",
+        ),
+    ] = False,
+    debug: DebugOption = True,
+    config: ConfigOption = None,
+) -> None:
+    """Copy files into every targeted student's Desktop.
+
+    The generalised form of the old push-lab.sh: takes any files rather
+    than two hardcoded lab filenames, and any destination inside the home
+    directory rather than always the Desktop. Each file lands owned by the
+    student and mode 644, so they can open, edit, and delete it. Pick
+    recipients with either --group (members by primary or secondary
+    membership, narrowed to real student accounts) or --all.
+
+    Never writes over a file that is already there. Identical content
+    already delivered is left alone, so re-running is safe; a file of the
+    same name holding something different -- a student's own work in the
+    handout you gave them -- keeps its place and the new copy lands beside
+    it as lab01-activity-2.html. Pass --overwrite only when you mean to
+    replace the file itself.
+    """
+    if bool(group) == everyone:
+        raise typer.BadParameter("Pass either --group <name> or --all, not both.")
+    _require_root_to_look("student push")
+    result = students.push_files(
+        _context(debug, config),
+        files,
+        group=group,
+        dest=dest,
+        overwrite=overwrite,
+    )
+    for entry in result.pushed:
+        console.print(f"  [green]pushed[/green] {entry}")
+    for entry in result.replaced:
+        console.print(f"  [green]replaced[/green] {entry}")
+    for entry in result.unchanged:
+        console.print(f"  [dim]unchanged[/dim] {entry}")
+    for entry, reason in result.skipped:
+        console.print(f"  [yellow]skipped[/yellow] {entry} ({reason})")
+    if not (result.pushed or result.replaced or result.unchanged or result.skipped):
+        console.print("Nobody to push to.")
 
 
 # ---------------------------------------------------------------- config

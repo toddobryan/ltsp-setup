@@ -167,6 +167,35 @@ class Runner:
         path.write_text(content)
         path.chmod(mode)
 
+    def copy(self, src: Path, dest: Path, *, mode: int = 0o644) -> None:
+        """Copy a file, creating parent directories.
+
+        Unlike :meth:`write`, the content never reaches the console or the
+        log.  These are arbitrary teacher-supplied files -- a .odt, a PDF,
+        an image -- and a dry run that dumped a few hundred kilobytes of
+        zip container into the terminal would be worse than useless.  Only
+        the paths are announced.
+        """
+        self._show("copy", f"{src} -> {dest} [dim](mode {mode:o})[/dim]")
+        logger.info("copy %s -> %s", src, dest)
+        if self.dry_run:
+            return
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        dest.chmod(mode)
+
+    def same_content(self, left: Path, right: Path) -> bool:
+        """True if both paths exist and hold identical bytes.
+
+        Compared byte-wise rather than as text, since this runs against
+        arbitrary handout files.  Always compared for real, even in a dry
+        run -- inspection, not a change, the same reasoning as
+        :meth:`read_text`.  False if either path is missing.
+        """
+        if not left.is_file() or not right.is_file():
+            return False
+        return left.read_bytes() == right.read_bytes()
+
     def read_text(self, path: Path) -> str:
         """Read a file's current contents.
 
@@ -229,6 +258,37 @@ class Runner:
             return True
         except KeyError:
             return False
+
+    def group_members(self, name: str) -> list[str]:
+        """Every account in a Unix group, by secondary *or* primary membership.
+
+        ``grp.getgrnam().gr_mem`` lists only *secondary* members -- an
+        account whose primary group is this one doesn't appear there at
+        all.  On a server where accounts are created with a per-section
+        primary group that is the difference between seeing a whole class
+        and seeing nobody, so both sources are unioned here.
+
+        Always read for real, even in a dry run -- inspection, not a
+        change, the same reasoning as :meth:`passwd_entries`.  Empty if no
+        such group exists.
+        """
+        try:
+            group = grp.getgrnam(name)
+        except KeyError:
+            return []
+        members = set(group.gr_mem)
+        members.update(
+            entry.pw_name for entry in pwd.getpwall() if entry.pw_gid == group.gr_gid
+        )
+        return sorted(members)
+
+    def primary_group(self, username: str) -> str:
+        """The name of ``username``'s primary group.
+
+        Always read for real, even in a dry run -- inspection, not a
+        change, the same reasoning as :meth:`passwd_entries`.
+        """
+        return grp.getgrgid(pwd.getpwnam(username).pw_gid).gr_name
 
     def append_line(self, path: Path, line: str) -> None:
         """Append ``line`` to ``path`` unless it is already there."""

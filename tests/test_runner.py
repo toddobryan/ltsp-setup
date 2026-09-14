@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import grp
+import pwd
 from pathlib import Path
 
 import pytest
@@ -141,3 +143,80 @@ def test_ensure_block_dry_run_writes_nothing(tmp_path: Path) -> None:
     Runner(dry_run=True).ensure_block(target, "# marker", "# marker\nsome line\n")
 
     assert not target.exists()
+
+
+def test_copy_dry_run_writes_nothing(tmp_path: Path) -> None:
+    src = tmp_path / "lab01-starter.odt"
+    src.write_bytes(b"PK\x03\x04binary")
+    dest = tmp_path / "desk" / "lab01-starter.odt"
+
+    Runner(dry_run=True).copy(src, dest)
+
+    assert not dest.exists()
+
+
+def test_copy_real_run_copies_bytes_and_sets_mode(tmp_path: Path) -> None:
+    src = tmp_path / "lab01-starter.odt"
+    src.write_bytes(b"PK\x03\x04binary")
+    dest = tmp_path / "desk" / "lab01-starter.odt"
+
+    Runner(dry_run=False).copy(src, dest, mode=0o644)
+
+    assert dest.read_bytes() == b"PK\x03\x04binary"
+    assert dest.stat().st_mode & 0o777 == 0o644
+
+
+def test_same_content_compares_for_real_even_in_a_dry_run(tmp_path: Path) -> None:
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.write_bytes(b"same")
+    right.write_bytes(b"same")
+
+    assert Runner(dry_run=True).same_content(left, right)
+
+    right.write_bytes(b"different")
+    assert not Runner(dry_run=True).same_content(left, right)
+
+
+def test_same_content_is_false_when_either_side_is_missing(tmp_path: Path) -> None:
+    present = tmp_path / "present"
+    present.write_bytes(b"x")
+    assert not Runner(dry_run=False).same_content(present, tmp_path / "absent")
+    assert not Runner(dry_run=False).same_content(tmp_path / "absent", present)
+
+
+def test_group_members_unions_primary_and_secondary_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole reason this method exists: grp lists only secondary members,
+    so an account whose *primary* group is the section would be invisible.
+    """
+
+    class FakeGroup:
+        gr_gid = 2001
+        gr_mem = ["zwhite28"]
+
+    class FakePasswd:
+        def __init__(self, name: str, gid: int) -> None:
+            self.pw_name = name
+            self.pw_gid = gid
+
+    monkeypatch.setattr(grp, "getgrnam", lambda name: FakeGroup())
+    monkeypatch.setattr(
+        pwd,
+        "getpwall",
+        lambda: [FakePasswd("aadams27", 2001), FakePasswd("elsewhere", 3000)],
+    )
+
+    assert Runner(dry_run=True).group_members("r1") == ["aadams27", "zwhite28"]
+
+
+def test_group_members_is_empty_for_a_group_that_does_not_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(name: str) -> None:
+        raise KeyError(name)
+
+    monkeypatch.setattr(grp, "getgrnam", missing)
+
+    assert Runner(dry_run=True).group_members("nope") == []

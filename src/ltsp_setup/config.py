@@ -232,6 +232,11 @@ class Students:
     uid_max: int = 60000
     protected_usernames: tuple[str, ...] = ("toddobryan", "student")
 
+    # Where `student push` drops a file inside each account. Relative to
+    # the student's home directory: on a thin client the Desktop is where a
+    # handout is actually in front of them when they log in.
+    push_dest: Path = field(default_factory=lambda: Path("Desktop"))
+
     # Maps the first whitespace-delimited token of a roster CSV row's
     # "Course" field to a comma-joinable Unix group name (or names, for a
     # student enrolled in more than one mapped section) -- see

@@ -6,7 +6,7 @@ image, so a fix to an already-created account has to land in the home
 directory directly rather than through a rebuilt image (see
 ``steps/image.py`` and ``docs/desktop-polish-todo.md``).
 
-Two very different risk levels live in this module, and the split is
+Three very different risk levels live in this module, and the split is
 deliberate (Todd, 2026-08-24): resetting a *setting* back to a default is
 cheap and reversible -- worst case, a student notices and changes it back.
 Deleting a *file with content* is not reversible at all. ``reset_defaults``
@@ -15,11 +15,19 @@ and ``apply_defaults`` only ever touch the fixed allowlist in
 anything a student created. ``remove_all`` is the one function here that
 deletes real content (whole home directories), which is why it reports a
 file count per account before touching anything, real run or not.
+
+``push_files`` is the third: it writes files this project didn't
+generate into a place students keep their own work, so unlike everything
+above it could in principle land on top of something a student made. That
+is why it never writes over a file that is already there, adding a
+numbered copy beside it instead unless explicitly told to overwrite --
+see that function's docstring.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -336,3 +344,225 @@ def apply_defaults_all(ctx: Context) -> dict[str, AppliedResult]:
     }
     _advance_baseline(ctx, snapshot)
     return results
+
+
+# ------------------------------------------------------------- pushing out
+
+# How many same-named copies of one handout may pile up in an account before
+# push_files gives up and says so. A student who really has 99 versions of
+# lab01-activity.html on their desktop has a different problem, and silently
+# adding a hundredth is not the answer.
+MAX_SUFFIXED_COPIES = 99
+
+
+@dataclass
+class PushResult:
+    """What a push did, as "<username>: <filename>" entries.
+
+    A file that had to be renamed out of the way of a student's own copy
+    appears in ``pushed`` under the name it actually landed as, e.g.
+    "aadams27: lab01-activity-2.html". ``skipped`` pairs each entry with
+    why, the same shape as :class:`AppliedResult` -- either a whole account
+    ("aadams27") that couldn't be written to, or one file within one
+    account.
+    """
+
+    pushed: list[str] = field(default_factory=list)
+    replaced: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+    skipped: list[tuple[str, str]] = field(default_factory=list)
+
+
+def _recipients(ctx: Context, group: str | None) -> tuple[list[str], list[str]]:
+    """Which accounts a push goes to, and which group members it won't.
+
+    With no group, every real student account. With one, that group's
+    members -- by primary *or* secondary membership, see
+    ``Runner.group_members`` -- narrowed to the ones that are real student
+    accounts. The narrowing is what keeps a push aimed at a section from
+    also dropping files in Todd's own home directory, since his account is
+    in these groups too; the excluded names are returned rather than
+    silently dropped so the report can say who was passed over and why.
+    """
+    students_only = real_student_accounts(ctx)
+    if group is None:
+        return students_only, []
+    if not ctx.runner.group_exists(group):
+        raise StepFailed(f"No such group: {group}")
+    eligible = set(students_only)
+    members = ctx.runner.group_members(group)
+    return (
+        [name for name in members if name in eligible],
+        [name for name in members if name not in eligible],
+    )
+
+
+def _checked_dest(dest: Path) -> Path:
+    """Validate a destination directory given relative to a home directory.
+
+    Absolute paths and ``..`` are refused rather than resolved: this path
+    is joined onto every targeted student's home directory, so anything
+    that can climb out of one is a way to write across the whole server by
+    typo. Same fail-closed reasoning as ``_USERNAME`` above.
+    """
+    if dest.is_absolute():
+        raise StepFailed(
+            f"The destination must be relative to the student's home directory, "
+            f"so it can't start with '/': {dest}"
+        )
+    if ".." in dest.parts:
+        raise StepFailed(
+            f"The destination must stay inside the student's home directory, "
+            f"so it can't contain '..': {dest}"
+        )
+    return dest
+
+
+def _suffixed(name: str, index: int) -> str:
+    """``lab01-activity.html`` at index 2 -> ``lab01-activity-2.html``.
+
+    The number goes before the extension, not after, so the file still
+    opens in the right application when a student double-clicks it.
+    """
+    stem, dot, extension = name.partition(".")
+    return f"{stem}-{index}{dot}{extension}" if dot else f"{name}-{index}"
+
+
+def _existing_copy(ctx: Context, src: Path, dest_dir: Path) -> Path | None:
+    """A copy of ``src`` already sitting in ``dest_dir``, under any of the
+    names a push would have used.
+
+    What makes re-running a push idempotent rather than a way to accumulate
+    ``-2``, ``-3``, ``-4``: if this file was already delivered -- under its
+    own name, or renamed out of the way of the student's version on an
+    earlier run -- there is nothing left to do.
+    """
+    for candidate in _candidate_names(src.name):
+        target = dest_dir / candidate
+        if not ctx.runner.exists(target):
+            return None
+        if ctx.runner.same_content(src, target):
+            return target
+    return None
+
+
+def _candidate_names(name: str) -> Iterator[str]:
+    """``name``, then ``name-2``, ``name-3``, ... up to the cap."""
+    yield name
+    for index in range(2, MAX_SUFFIXED_COPIES + 1):
+        yield _suffixed(name, index)
+
+
+def _free_name(ctx: Context, src: Path, dest_dir: Path) -> Path:
+    """The first name in ``dest_dir`` that ``src`` can be written to without
+    displacing anything already there.
+    """
+    for candidate in _candidate_names(src.name):
+        target = dest_dir / candidate
+        if not ctx.runner.exists(target):
+            return target
+    raise StepFailed(
+        f"{dest_dir} already holds {MAX_SUFFIXED_COPIES} copies of "
+        f"{src.name} -- look at that account before pushing again"
+    )
+
+
+def push_files(
+    ctx: Context,
+    sources: Sequence[Path],
+    *,
+    group: str | None = None,
+    dest: Path | None = None,
+    overwrite: bool = False,
+) -> PushResult:
+    """Copy files into every targeted student's handout directory.
+
+    Generalises the one-off ``push-lab.sh`` (Todd, 2026-08-28), which
+    hardcoded two lab filenames and took a section name. Each file lands at
+    ``<home>/<dest>/<filename>``, owned by the student and mode 644, so
+    they can open it, edit it, and delete it. ``dest`` defaults to
+    ``students.push_dest`` from config, and is always relative to the
+    student's own home directory.
+
+    Every source and the destination are checked before anything is
+    written, so a typo fails with nothing half-pushed.
+
+    **A student's own file is never written over.** They may well have
+    opened the handout, done the work in it and saved it in place under the
+    same name, and that loss is not recoverable. So:
+
+    - Already there with identical content -- under its own name or under
+      an earlier run's ``-2`` name -- and nothing happens; the file has
+      been delivered.
+    - Already there and *different*, and the new copy lands beside it as
+      ``lab01-activity-2.html`` (then ``-3``, ...). The student keeps their
+      work and still gets the new file.
+    - ``overwrite=True`` replaces the file in place instead. For the case
+      the renaming is meant to protect against being impossible -- you
+      fixed a typo in a starter file minutes after pushing it -- and never
+      the default.
+
+    Args:
+        ctx: Settings and runner.
+        sources: Files to push. Directories are not handled.
+        group: Push to this Unix group's student members, or every student
+            account when None.
+        dest: Directory inside each home directory, relative to it.
+            Defaults to ``students.push_dest``.
+        overwrite: Replace a differing file in place rather than writing
+            alongside it.
+
+    Returns:
+        A :class:`PushResult` naming what happened to every file in every
+        account, including the name each one actually landed under.
+    """
+    missing = [str(src) for src in sources if not ctx.runner.exists(src)]
+    if missing:
+        raise StepFailed(
+            "Nothing was pushed -- these files don't exist: " + ", ".join(missing)
+        )
+    dest_rel = _checked_dest(dest or ctx.settings.students.push_dest)
+
+    result = PushResult()
+    recipients, not_students = _recipients(ctx, group)
+    for name in not_students:
+        result.skipped.append((name, "not a student account"))
+
+    for username in recipients:
+        home = _home_dir(ctx, username)
+        if not ctx.runner.exists(home):
+            result.skipped.append((username, f"no home directory at {home}"))
+            continue
+
+        dest_dir = home / dest_rel
+        if not ctx.runner.exists(dest_dir):
+            # Only when it doesn't exist: an existing Desktop is already
+            # the student's own, and re-chowning it every push would be
+            # noise at best and a surprise at worst.
+            ctx.runner.mkdir(dest_dir)
+            ctx.runner.chown(dest_dir, username, ctx.runner.primary_group(username))
+
+        for src in sources:
+            # With overwrite, only the file's own name is considered: the
+            # point of asking for it is to fix what is sitting under that
+            # exact name, so an identical -2 copy from an earlier run is
+            # not a reason to call the job done.
+            named = dest_dir / src.name
+            if overwrite:
+                if ctx.runner.same_content(src, named):
+                    result.unchanged.append(f"{username}: {named.name}")
+                    continue
+                target, replacing = named, ctx.runner.exists(named)
+            else:
+                already = _existing_copy(ctx, src, dest_dir)
+                if already is not None:
+                    result.unchanged.append(f"{username}: {already.name}")
+                    continue
+                target, replacing = _free_name(ctx, src, dest_dir), False
+
+            ctx.runner.copy(src, target)
+            ctx.runner.chown(target, username, ctx.runner.primary_group(username))
+            entry = f"{username}: {target.name}"
+            (result.replaced if replacing else result.pushed).append(entry)
+
+    return result
