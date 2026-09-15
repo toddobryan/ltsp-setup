@@ -15,7 +15,7 @@ from ltsp_setup import plans, stages
 from ltsp_setup.lab.virt import Virt
 from ltsp_setup.runner import Runner, StepFailed, console
 from ltsp_setup.stages import Context
-from ltsp_setup.steps import client, image, roster, students
+from ltsp_setup.steps import client, image, roster, smoke, students
 
 LOG_FILE = Path("/var/log/ltsp-setup.log")
 
@@ -352,6 +352,16 @@ def image_refresh(
             "`--stage desktop` after changing a system-wide desktop default.",
         ),
     ] = None,
+    publish: Annotated[
+        bool,
+        typer.Option(
+            "--publish",
+            help="Make the build live, smoke-test it by netbooting the test "
+            "client, and roll DEFAULT_IMAGE back if it doesn't come up. What "
+            "the weekly timer runs; without it the build is left for a human "
+            "to test and publish by hand.",
+        ),
+    ] = False,
     debug: DebugOption = True,
     config: ConfigOption = None,
 ) -> None:
@@ -361,21 +371,41 @@ def image_refresh(
     re-install this tool on it, run the requested stages, strip the tooling
     back off, shut it down, and build.
 
-    Stops short of making the build live. Test it first, then run the two
-    commands this prints (`image set-default`, then `image prune`).
+    Stops short of making the build live unless --publish is given. Test it
+    first, then run the two commands this prints (`image set-default`, then
+    `image prune`).
     """
     _require_root(debug)
     ctx = _context(debug, config)
-    name = image.refresh_image(ctx, stage or ["mirrors"])
+    name = image.refresh_image(ctx, stage or ["mirrors"], publish=publish)
     console.print(f"[bold green]Built:[/bold green] {name}")
+    if publish:
+        console.print("Live, and it netbooted the test client successfully.")
+        console.print(
+            "To go back to the previous build:  "
+            "sudo ltsp-setup image set-default <name> --no-debug  (see `image list`)"
+        )
+        return
     console.print("Not live yet. Test it by netbooting a client, then run:")
     console.print(f"  sudo ltsp-setup image set-default {name} --no-debug")
     console.print("  sudo ltsp-setup image prune --no-debug")
 
 
 @image_app.command("prune")
-def image_prune(debug: DebugOption = True, config: ConfigOption = None) -> None:
-    """Delete every published image except the one currently live.
+def image_prune(
+    keep: Annotated[
+        Optional[int],
+        typer.Option(
+            "--keep",
+            help="How many superseded builds to keep as rollback targets, on "
+            "top of the live one. Defaults to image_refresh.keep_rollback_images "
+            "(1). Pass 0 to leave only the live image.",
+        ),
+    ] = None,
+    debug: DebugOption = True,
+    config: ConfigOption = None,
+) -> None:
+    """Delete superseded images, keeping the live one and --keep rollbacks.
 
     Removes both halves of each stale build -- the squashfs and the
     kernel/initrd `ltsp ipxe` uses to generate the PXE boot menu -- so an
@@ -385,11 +415,62 @@ def image_prune(debug: DebugOption = True, config: ConfigOption = None) -> None:
     """
     _require_root(debug)
     ctx = _context(debug, config)
-    pruned = image.prune_published_images(ctx)
+    if keep is None:
+        keep = ctx.settings.image_refresh.keep_rollback_images
+    pruned = image.prune_published_images(ctx, keep=keep)
     if not pruned:
-        console.print("Nothing to prune -- only the live image is published.")
+        console.print("Nothing to prune -- nothing is published but the keepers.")
         return
     console.print(f"[bold]{len(pruned)} image(s) removed:[/bold] {', '.join(pruned)}")
+
+
+@image_app.command("smoke-test")
+def image_smoke_test(debug: DebugOption = True, config: ConfigOption = None) -> None:
+    """Netboot the test client against the live image and report what happened.
+
+    The same check `image refresh --publish` runs before it decides whether
+    to keep a new build. Useful on its own to confirm the lab still boots
+    without walking to a machine and turning it on.
+    """
+    _require_root(debug)
+    ctx = _context(debug, config)
+    address = smoke.smoke_test_client(ctx)
+    if ctx.runner.dry_run:
+        return
+    console.print(
+        f"[bold green]Booted:[/bold green] the live image came up at {address}"
+    )
+
+
+@image_app.command("schedule")
+def image_schedule(debug: DebugOption = True, config: ConfigOption = None) -> None:
+    """Turn on the weekly unattended rebuild (systemd timer).
+
+    Installs a timer that runs `image refresh --publish` on the schedule in
+    image_refresh.on_calendar. Re-run it after changing any image_refresh
+    setting -- the unit files are generated from config, not read from it.
+    """
+    _require_root(debug)
+    ctx = _context(debug, config)
+    image.install_refresh_timer(ctx, Path(config) if config else None)
+    console.print(
+        f"[bold green]Scheduled:[/bold green] {ctx.settings.image_refresh.on_calendar}"
+    )
+    console.print(f"  {image.refresh_command(ctx, Path(config) if config else None)}")
+
+
+@image_app.command("unschedule")
+def image_unschedule(debug: DebugOption = True, config: ConfigOption = None) -> None:
+    """Turn the weekly unattended rebuild back off and remove its units."""
+    _require_root(debug)
+    image.remove_refresh_timer(_context(debug, config))
+    console.print("The weekly rebuild is off.")
+
+
+@image_app.command("schedule-status")
+def image_schedule_status(config: ConfigOption = None) -> None:
+    """Show whether the weekly rebuild is scheduled, and when it next runs."""
+    console.print(image.refresh_timer_status(_context(False, config)))
 
 
 @image_app.command("status")

@@ -9,7 +9,7 @@ written" and "the code works" has not been closed yet.
 
 ## Where things actually stand
 
-**Verified:** 45 unit tests pass, `mypy --strict` is clean, `black` is clean,
+**Verified:** 230 unit tests pass, `mypy --strict` is clean, `black` is clean,
 and every CLI command has been exercised in dry-run mode so the exact shell
 commands and file contents have been eyeballed.
 
@@ -177,6 +177,71 @@ straight from the server's own dnsmasq log: PXE DHCP → TFTP serves
 as `set img ltsp-client-template` injected into the generated file) →
 correct per-image `vmlinuz`/`initrd.img` served → client requests its own
 DHCP lease → `showmount -a` shows `/srv/ltsp` mounted from the client.
+
+### The unattended rebuild publishes, and a netboot is what makes that safe
+
+Todd asked (2026-09-12) for a weekend job that apt-upgrades the template,
+rebuilds, and makes the result live, "keeping the last proven-to-boot image
+available for quick rollback". Publishing unattended is a real change of
+policy: `refresh_image` deliberately stopped short of it, because a build
+that boots to a broken desktop shouldn't become the default without a human
+having looked at it. The gate wasn't dropped — it was replaced with
+something that can run at two in the morning.
+
+**`publish_image` sets `DEFAULT_IMAGE` first and tests afterwards.** That
+looks backwards and isn't: `DEFAULT_IMAGE` is the only thing a netbooting
+client reads, so there is no way to test a build without pointing something
+at it. What makes it safe is that the previous value is captured before the
+switch and put straight back on failure, so a bad image is live only for the
+few minutes it takes one VM to fail to boot — on a Sunday, with nobody
+logged in. Pruning happens last and only on success, so the image being
+rolled back *to* still exists when it's needed.
+
+**The test is a real netboot of a real client.** `pxe-test-client` is a
+diskless libvirt VM on `br0` with `<boot dev='network'/>` — a thin client in
+every respect except that it lives on the server. `steps/smoke.py` boots it
+and watches for two things in turn, because they fail differently and the
+difference is the diagnosis:
+
+1. a *fresh* DHCP lease for its MAC (expiry newer than the one taken while
+   the VM was definitely off — dnsmasq keeps leases twelve hours, so merely
+   having one proves nothing); this means PXE and DHCP work;
+2. a *new* `epoptes-client` connection to the server on port 789 (a peer
+   `address:port` not seen before the boot, since the kernel keeps a
+   powered-off client's socket ESTABLISHED for a while).
+
+The second is the one that matters. `epoptes-client` is in
+`CLIENT_PACKAGES`, so it's in every image this tool builds, and it's a
+systemd service rather than a session thing, so it connects at boot. iPXE
+can't produce it, which means the check can't pass by accident on a client
+that got as far as the boot menu and no further.
+
+What it deliberately does *not* prove is that the desktop is usable — a
+client that booted to a broken greeter would pass. That's the right scope:
+it's a smoke test, and the failure it exists to catch is an image that
+doesn't boot at all.
+
+**One superseded build survives the prune.** `prune_published_images` grew a
+`keep` (default 1, `image_refresh.keep_rollback_images`), because the old
+behaviour — delete everything but the live image — would eat exactly the
+rollback target the whole feature is for. Both halves are kept, squashfs and
+`/srv/tftp/ltsp/<name>/`: a squashfs with no kernel beside it isn't
+something `ltsp ipxe` can offer, so keeping only one half would leave a
+rollback that can't be booted.
+
+**A timer, not cron, and not `Persistent=true`.** Same reasoning as
+`ltsp-setup.service` below — the journal is the log. `Persistent=true` is
+specifically wrong here: catching up a missed run means starting an
+hour-long image build at whatever moment the server next boots, which is
+most likely Monday morning with a room full of students waiting on it.
+Skipping a week costs nothing.
+
+**Every `apt-get` now waits for the dpkg lock.** `-o DPkg::Lock::Timeout=`
+(`Settings.apt_lock_timeout_s`, 600s). apt's default is to exit non-zero the
+instant it finds the lock held, and `unattended-upgrades` holds it for
+minutes at a time in the small hours — exactly when this runs. Without it
+the common failure would be a rebuild that failed for a reason having
+nothing to do with the image.
 
 ### Building and testing the client image in the lab
 
@@ -580,14 +645,16 @@ Recording these too, same reason as above.
   webapp's stack; (4) whether student directory data living on a
   district-external host raises any compliance question worth checking
   into first, given it's specifically outside district infrastructure.
-- **Overnight rebuild-and-reimage cron job.** `ltsp-setup image build`
-  (`steps/image.py::build_image`) is the single re-runnable command this
-  would call. The precondition here — the create/build split exercised on
-  real hardware — is now satisfied (2026-08-27, several real rebuilds this
-  week). Still deferred: the "boot the template, update its packages, shut
-  it back down" half doesn't exist yet. See `docs/todo.md` for the two
-  concrete open items this split into (an interactive edit-and-rebuild
-  command, then the unattended cron version of it).
+- **Overnight rebuild-and-reimage cron job — written 2026-09-15, no longer
+  deferred, but never yet run for real.** Both halves now exist:
+  `ltsp-setup image refresh` boots the template, updates it over SSH and
+  builds (2026-09-09), and `ltsp-setup image schedule` installs a systemd
+  timer that runs it weekly with `--publish`, behind the netboot smoke test
+  described above. What's left is verification, not code — see "What to
+  check after the first weekend run" in `docs/todo.md`. Weekly rather than
+  every 2-3 days as originally asked: a rebuild is an hour of disk and a new
+  image for every client to fault in, and the packages rarely move enough in
+  two days to be worth that.
 - **Chrome's stale singleton lockfile — fixed 2026-08-26, no longer
   deferred.** Real recurring problem last school year (reported
   2026-08-20): if a student's session ends uncleanly — powering off the

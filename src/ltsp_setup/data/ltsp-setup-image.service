@@ -1,0 +1,20 @@
+[Unit]
+Description=$DESCRIPTION
+# The rebuild boots the client template under libvirt, so libvirt has to be
+# up first -- and it pulls packages from the Mint mirrors, so the network
+# has to be genuinely up, not merely configured.
+After=network-online.target libvirtd.service
+Wants=network-online.target libvirtd.service
+
+[Service]
+Type=oneshot
+ExecStart=$EXEC
+# A full apt upgrade, a qemu-img convert of a 40GB disk, and mksquashfs over
+# the result. On this hardware that is well over an hour, and systemd's
+# default start timeout would kill it partway through.
+TimeoutStartSec=infinity
+# Journal only, not the console: this runs unattended, and a squashfs
+# progress bar on tty1 helps nobody. `journalctl -u ltsp-setup-image` is
+# where to look afterwards.
+StandardOutput=journal
+StandardError=journal

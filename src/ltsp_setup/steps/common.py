@@ -60,16 +60,35 @@ def set_mirrors(ctx: Context) -> None:
     ctx.runner.write(SOURCES_LIST, content)
 
 
+def _apt(ctx: Context, *args: str) -> list[str]:
+    """An ``apt-get`` argv that waits for the dpkg lock rather than failing.
+
+    Without ``DPkg::Lock::Timeout``, apt gives up the instant it finds the
+    lock held and exits non-zero. ``unattended-upgrades`` holds it for
+    minutes at a time, in the small hours, which is exactly when the weekly
+    image rebuild runs -- so the default is a rebuild that fails for a
+    reason that has nothing to do with the image. Waiting is the right
+    answer; ``admin_user``-adjacent config carries how long (see
+    ``Settings.apt_lock_timeout_s``).
+    """
+    return [
+        "apt-get",
+        "-o",
+        f"DPkg::Lock::Timeout={ctx.settings.apt_lock_timeout_s}",
+        *args,
+    ]
+
+
 def apt_update(ctx: Context) -> None:
     """Refresh the package lists."""
-    ctx.runner.run(["apt-get", "update"])
+    ctx.runner.run(_apt(ctx, "update"))
 
 
 def apt_upgrade(ctx: Context) -> None:
     """Refresh package lists and upgrade everything installed."""
     apt_update(ctx)
     ctx.runner.run(
-        ["apt-get", "upgrade", "-y"],
+        _apt(ctx, "upgrade", "-y"),
         env={"DEBIAN_FRONTEND": "noninteractive"},
     )
 
@@ -84,7 +103,7 @@ def apt_install(ctx: Context, packages: list[str], *, recommends: bool = True) -
     """
     if not packages:
         return
-    argv = ["apt-get", "install", "-y"]
+    argv = _apt(ctx, "install", "-y")
     if not recommends:
         argv.append("--no-install-recommends")
     argv.extend(packages)

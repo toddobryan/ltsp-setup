@@ -24,7 +24,7 @@ import pytest
 from ltsp_setup.config import Settings
 from ltsp_setup.runner import Runner, StepFailed
 from ltsp_setup.stages import Context
-from ltsp_setup.steps import image
+from ltsp_setup.steps import image, smoke
 from ltsp_setup.virt import Libvirt
 
 HOST_TOOLS_AVAILABLE = (
@@ -433,6 +433,185 @@ def _must_not_be_called(*args: object, **kwargs: object) -> None:
     raise AssertionError("refresh_image must not publish the build itself")
 
 
+class TestPublishImage:
+    """The unattended half: go live, prove it boots, put it back if it doesn't.
+
+    A bad build going live unnoticed is the failure Todd actually worried
+    about when he asked for the weekly rebuild (2026-09-12), so the rollback
+    path gets more attention here than the happy one.
+    """
+
+    def _ctx(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, live: str
+    ) -> Context:
+        conf = tmp_path / "ltsp.conf"
+        conf.write_text(f'[server]\nDEFAULT_IMAGE="{live}"\n')
+        monkeypatch.setattr(image, "LTSP_CONF", conf)
+        monkeypatch.setattr(image, "PUBLISHED_IMAGE_DIR", tmp_path / "images")
+        monkeypatch.setattr(image, "TFTP_IMAGE_DIR", tmp_path / "tftp")
+        ctx = Context(Settings(), Runner(dry_run=False))
+        monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+        return ctx
+
+    def test_makes_the_build_live_then_prunes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = self._ctx(tmp_path, monkeypatch, live="mint-2026-09-07")
+        monkeypatch.setattr(smoke, "smoke_test_client", lambda _c: "192.168.67.99")
+        pruned: list[int] = []
+
+        def record_prune(_c: Context, *, keep: int) -> list[str]:
+            pruned.append(keep)
+            return []
+
+        monkeypatch.setattr(image, "prune_published_images", record_prune)
+
+        image.publish_image(ctx, "mint-2026-09-14")
+
+        assert image.current_default_image(ctx) == "mint-2026-09-14"
+        assert pruned == [1]  # image_refresh.keep_rollback_images
+
+    def test_rolls_default_image_back_when_the_build_does_not_boot(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = self._ctx(tmp_path, monkeypatch, live="mint-2026-09-07")
+        monkeypatch.setattr(smoke, "smoke_test_client", _fails_to_boot)
+
+        with pytest.raises(StepFailed, match="rolled back to mint-2026-09-07"):
+            image.publish_image(ctx, "mint-2026-09-14")
+
+        assert image.current_default_image(ctx) == "mint-2026-09-07"
+
+    def test_does_not_prune_the_rollback_it_just_fell_back_to(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pruning after a failed smoke test would delete the very image
+        DEFAULT_IMAGE was just pointed back at."""
+        ctx = self._ctx(tmp_path, monkeypatch, live="mint-2026-09-07")
+        monkeypatch.setattr(smoke, "smoke_test_client", _fails_to_boot)
+        monkeypatch.setattr(image, "prune_published_images", _must_not_be_called)
+
+        with pytest.raises(StepFailed):
+            image.publish_image(ctx, "mint-2026-09-14")
+
+    def test_says_so_when_there_is_nothing_to_roll_back_to(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        conf = tmp_path / "ltsp.conf"
+        conf.write_text("[server]\n")
+        monkeypatch.setattr(image, "LTSP_CONF", conf)
+        ctx = Context(Settings(), Runner(dry_run=False))
+        monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+        monkeypatch.setattr(smoke, "smoke_test_client", _fails_to_boot)
+
+        with pytest.raises(StepFailed, match="no previous DEFAULT_IMAGE"):
+            image.publish_image(ctx, "mint-2026-09-14")
+
+
+def _fails_to_boot(*args: object, **kwargs: object) -> str:
+    raise StepFailed("never connected to epoptes")
+
+
+@requires_host_tools
+def test_refresh_image_publishes_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = Context(Settings(), Runner(dry_run=True))
+    _record_calls(ctx, monkeypatch)
+    published: list[str] = []
+    monkeypatch.setattr(image, "publish_image", lambda _c, name: published.append(name))
+
+    image.refresh_image(ctx, ["mirrors"], publish=True)
+
+    assert published == [image.dated_image_name(ctx)]
+
+
+class TestRefreshTimer:
+    def test_the_scheduled_command_publishes_and_never_prompts(self) -> None:
+        """--publish is the whole reason the timer exists, and --no-debug is
+        what makes it do anything at all rather than print a preview into
+        the journal."""
+        ctx = Context(Settings(), Runner(dry_run=True))
+        command = image.refresh_command(ctx, None)
+        assert " image refresh --publish --no-debug --stage mirrors" in command
+
+    def test_the_scheduled_command_carries_the_config_file_through(self) -> None:
+        ctx = Context(Settings(), Runner(dry_run=True))
+        command = image.refresh_command(ctx, Path("/etc/ltsp-setup.toml"))
+        assert command.endswith("--config /etc/ltsp-setup.toml")
+
+    def test_every_configured_stage_reaches_the_command(self) -> None:
+        settings = dataclasses.replace(
+            Settings(),
+            image_refresh=dataclasses.replace(
+                Settings().image_refresh, stages=("mirrors", "apps")
+            ),
+        )
+        command = image.refresh_command(Context(settings, Runner(dry_run=True)), None)
+        assert "--stage mirrors --stage apps" in command
+
+    def test_installing_enables_the_timer_but_not_the_service(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An enabled oneshot service would run an hour-long image build at
+        every boot. Only the timer gets enabled."""
+        ctx = Context(Settings(), Runner(dry_run=True))
+        calls = _record_calls(ctx, monkeypatch)
+        written: dict[Path, str] = {}
+        monkeypatch.setattr(
+            ctx.runner, "write", lambda path, text, **kw: written.update({path: text})
+        )
+
+        image.install_refresh_timer(ctx)
+
+        assert set(written) == {image.REFRESH_SERVICE_PATH, image.REFRESH_TIMER_PATH}
+        assert "[Install]" not in written[image.REFRESH_SERVICE_PATH]
+        assert ["systemctl", "enable", "--now", "ltsp-setup-image.timer"] in calls
+
+    def test_the_timer_carries_the_configured_schedule(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = dataclasses.replace(
+            Settings(),
+            image_refresh=dataclasses.replace(
+                Settings().image_refresh, on_calendar="Sat *-*-* 23:00:00"
+            ),
+        )
+        ctx = Context(settings, Runner(dry_run=True))
+        _record_calls(ctx, monkeypatch)
+        written: dict[Path, str] = {}
+        monkeypatch.setattr(
+            ctx.runner, "write", lambda path, text, **kw: written.update({path: text})
+        )
+
+        image.install_refresh_timer(ctx)
+
+        assert "OnCalendar=Sat *-*-* 23:00:00" in written[image.REFRESH_TIMER_PATH]
+        # A caught-up run means starting a rebuild whenever the server next
+        # boots, most likely Monday morning. Skipping a week is cheaper.
+        directives = [
+            line
+            for line in written[image.REFRESH_TIMER_PATH].splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+        assert not any(line.startswith("Persistent=") for line in directives)
+
+    def test_removing_disables_and_deletes_both_units(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = Context(Settings(), Runner(dry_run=True))
+        calls = _record_calls(ctx, monkeypatch)
+        removed: list[list[Path]] = []
+        monkeypatch.setattr(
+            ctx.runner, "remove", lambda paths: removed.append(list(paths))
+        )
+
+        image.remove_refresh_timer(ctx)
+
+        assert ["systemctl", "disable", "--now", "ltsp-setup-image.timer"] in calls
+        assert removed == [[image.REFRESH_TIMER_PATH, image.REFRESH_SERVICE_PATH]]
+
+
 def _setup_prune(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, live: str | None
 ) -> Context:
@@ -452,7 +631,7 @@ def _setup_prune(
 
 
 class TestPrunePublishedImages:
-    def test_deletes_everything_except_the_live_image(
+    def test_keep_zero_deletes_everything_except_the_live_image(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-08-27")
@@ -465,7 +644,7 @@ class TestPrunePublishedImages:
             ctx.runner, "run", lambda argv, **kw: calls.append(list(argv))
         )
 
-        pruned = image.prune_published_images(ctx)
+        pruned = image.prune_published_images(ctx, keep=0)
 
         assert pruned == ["mint-2026-08-26", "mint-2026-08-25"]
         assert not (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-25.img").exists()
@@ -490,7 +669,7 @@ class TestPrunePublishedImages:
         (image.TFTP_IMAGE_DIR / "mint-2026-08-27").mkdir()
         monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
 
-        pruned = image.prune_published_images(ctx)
+        pruned = image.prune_published_images(ctx, keep=0)
 
         assert set(pruned) == {"squashfs-only", "tftp-only"}
         assert not (image.PUBLISHED_IMAGE_DIR / "squashfs-only.img").exists()
@@ -507,7 +686,7 @@ class TestPrunePublishedImages:
             ctx.runner, "run", lambda argv, **kw: calls.append(list(argv))
         )
 
-        pruned = image.prune_published_images(ctx)
+        pruned = image.prune_published_images(ctx, keep=0)
 
         assert pruned == []
         assert calls == []  # ltsp ipxe not re-run when nothing changed
@@ -520,3 +699,61 @@ class TestPrunePublishedImages:
 
         with pytest.raises(StepFailed, match="DEFAULT_IMAGE"):
             image.prune_published_images(ctx)
+
+    def test_keeps_the_newest_superseded_build_as_a_rollback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole point of the weekly rebuild keeping a rollback: last
+        week's proven-to-boot image has to survive the prune that follows
+        this week's (Todd, 2026-09-12).
+        """
+        ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-08-27")
+        for name in ["mint-2026-08-24", "mint-2026-08-25", "mint-2026-08-26"]:
+            (image.PUBLISHED_IMAGE_DIR / f"{name}.img").write_text("x")
+            (image.TFTP_IMAGE_DIR / name).mkdir()
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-27.img").write_text("x")
+        (image.TFTP_IMAGE_DIR / "mint-2026-08-27").mkdir()
+        monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+
+        pruned = image.prune_published_images(ctx, keep=1)
+
+        assert pruned == ["mint-2026-08-25", "mint-2026-08-24"]
+        # Both halves of the rollback survive -- the squashfs is useless if
+        # `ltsp ipxe` can't find a kernel to go with it.
+        assert (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-26.img").exists()
+        assert (image.TFTP_IMAGE_DIR / "mint-2026-08-26").exists()
+        assert (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-27.img").exists()
+
+    def test_defaults_to_keeping_one_rollback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-08-27")
+        for name in ["mint-2026-08-25", "mint-2026-08-26", "mint-2026-08-27"]:
+            (image.PUBLISHED_IMAGE_DIR / f"{name}.img").write_text("x")
+            (image.TFTP_IMAGE_DIR / name).mkdir()
+        monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+
+        assert image.prune_published_images(ctx) == ["mint-2026-08-25"]
+
+    def test_keeping_more_than_exist_prunes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-08-27")
+        for name in ["mint-2026-08-26", "mint-2026-08-27"]:
+            (image.PUBLISHED_IMAGE_DIR / f"{name}.img").write_text("x")
+            (image.TFTP_IMAGE_DIR / name).mkdir()
+        monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+
+        assert image.prune_published_images(ctx, keep=5) == []
+
+    def test_negative_keep_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A negative slice index would silently keep the *newest* builds and
+        delete the rest, which is the opposite of what was asked for.
+        """
+        ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-08-27")
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-26.img").write_text("x")
+
+        with pytest.raises(StepFailed, match="negative"):
+            image.prune_published_images(ctx, keep=-1)

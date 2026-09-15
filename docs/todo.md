@@ -18,16 +18,28 @@ tweaks (those go in `desktop-polish-todo.md`) and aren't design decisions
       original wish: it runs *named stages* rather than dropping into an
       interactive shell, because the same code path has to work unattended
       for the cron job below. Leave this open until a real run confirms it.
-- [ ] **Cron job: rebuild the image automatically every 2-3 days,
-      overnight** (Todd, 2026-08-27). Boot the template, `apt upgrade` it,
-      rebuild and publish the image, all unattended. `image refresh` above
-      is now the command this would call. Two things to sort out first:
-      whether it should publish unattended at all (today's deliberate gate
-      says a human looks first), and dpkg lock contention — Mint's
-      `apt-daily` timers can hold the lock, and our apt calls fail
-      immediately rather than waiting, which is survivable when watching
-      and not at 3am. Fix is `-o DPkg::Lock::Timeout=600` on the apt
-      helpers in `steps/common.py`.
+- [ ] **Weekly unattended rebuild** (Todd, 2026-08-27, scoped 2026-09-12) —
+      **implemented 2026-09-15, not yet run for real.** `ltsp-setup image
+      schedule` installs a systemd timer that runs `image refresh --publish`
+      at `image_refresh.on_calendar` (Sunday 02:00 by default, with a
+      30-minute randomised delay). Leave open until a weekend run has
+      actually happened; see "What to check after the first weekend run"
+      below.
+
+      The "should it publish unattended at all?" question resolved to *yes,
+      but only behind a real test*: `publish_image` sets `DEFAULT_IMAGE`,
+      netboots `pxe-test-client` against it, and puts the old image straight
+      back if the client doesn't come up. The human gate didn't disappear —
+      it was replaced by something that can run at 2am. `image prune` now
+      also keeps one superseded build by default
+      (`image_refresh.keep_rollback_images`), so reverting by hand is
+      `image set-default <name>` and a reboot rather than an hour-long
+      rebuild.
+
+      dpkg lock contention is fixed: every `apt-get` this tool runs now
+      carries `-o DPkg::Lock::Timeout=` (`Settings.apt_lock_timeout_s`,
+      600s), so an `apt-daily` timer holding the lock delays a rebuild
+      instead of failing it.
 - [ ] **Add `openssh-server` to the client image** (2026-09-09). There is
       currently no way to reach a running thin client from the server:
       `CLIENT_PACKAGES` doesn't include it, and `nc -z` against all six
@@ -46,6 +58,30 @@ tweaks (those go in `desktop-polish-todo.md`) and aren't design decisions
       with enough privilege to power the machine off). Epoptes is the
       purpose-built tool for this and is already installed on both ends, so
       this may be a better answer than sshd above, or a complement to it.
+
+## What to check after the first weekend run
+
+The whole pipeline is written and unit-tested but has never run end to end
+against the real lab. In rough order of how likely each is to be the thing
+that breaks:
+
+- [ ] **`image refresh` has still never completed a real run.** Its first
+      attempt (2026-09-09) died on SSH auth; the fix is committed but
+      unverified. The timer can't work until this does.
+- [ ] **Does `epoptes-client` really connect at boot, before anyone logs
+      in?** The smoke test depends on it. The evidence it was designed
+      against is circumstantial — established connections on port 789 from
+      clients sitting at the greeter — not a watched cold boot. If it turns
+      out to connect only at login, the smoke test needs a different
+      signal and will fail every run until it gets one.
+- [ ] **Does `pxe-test-client` get a fresh DHCP lease each boot?** The
+      lease check compares expiry timestamps, on the assumption that a
+      booting client always renews. A client that reuses an unexpired lease
+      without touching dnsmasq would time out at stage one.
+- [ ] **Run it by hand first**: `sudo ltsp-setup image smoke-test --no-debug`
+      against the image that's already live. It should pass in a few
+      minutes. That isolates the smoke test from the rebuild, so a failure
+      on Sunday morning is unambiguous.
 
 ## Done
 

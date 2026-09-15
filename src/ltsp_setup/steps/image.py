@@ -22,8 +22,10 @@ from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
+from ltsp_setup import templates
 from ltsp_setup.runner import StepFailed
-from ltsp_setup.stages import Context
+from ltsp_setup.stages import Context, entry_point
+from ltsp_setup.steps import smoke
 from ltsp_setup.steps.server import LTSP_CONF
 from ltsp_setup.virt import Libvirt
 
@@ -283,25 +285,80 @@ def update_client_template(ctx: Context, stages: Sequence[str]) -> None:
     _ssh(ctx, address, "sudo -n /usr/local/bin/ltsp-setup client cleanup --no-debug")
 
 
-def refresh_image(ctx: Context, stages: Sequence[str]) -> str:
+def refresh_image(ctx: Context, stages: Sequence[str], *, publish: bool = False) -> str:
     """Boot the template, bring it up to date, and build a fresh image.
 
     The whole by-hand routine as one command (Todd, 2026-09-09): start the
     VM, re-install this tool on it, run the stages that matter, strip the
     tooling back off, shut it down, and build.
 
-    Deliberately stops there. Making the build live (``set_default_image``)
+    Stops there by default. Making the build live (``set_default_image``)
     and deleting what it supersedes (``prune_published_images``) stay
     separate, because "once we're sure it works" is a real gate -- a build
     that boots to a broken desktop should not be able to become the default
     without a human having looked at it first.
+
+    ``publish=True`` is the unattended weekly rebuild, where no human is
+    going to look at it. That gate does not simply disappear: it is replaced
+    by ``publish_image``, which boots a real client against the new image
+    and puts the old one back if it does not come up.
 
     Returns:
         The name this build was published under.
     """
     start_client_template(ctx)
     update_client_template(ctx, stages)
-    return build_image(ctx)
+    name = build_image(ctx)
+    if publish:
+        publish_image(ctx, name)
+    return name
+
+
+def publish_image(ctx: Context, name: str, *, keep: int | None = None) -> None:
+    """Make ``name`` live, prove it boots, and roll back if it doesn't.
+
+    The unattended half of the weekly rebuild (Todd, 2026-09-12). The order
+    here is the point: the image goes live *first*, because ``DEFAULT_IMAGE``
+    is the only thing a netbooting client reads, so there is no way to test
+    a build without pointing something at it. What makes that safe is that
+    the previous ``DEFAULT_IMAGE`` is captured before the switch and put
+    straight back if the smoke test fails -- so a bad build is live only for
+    the few minutes it takes one VM to not boot, in the middle of the night,
+    with nobody logged in.
+
+    Pruning happens last and only on success, so the image being rolled back
+    *to* still exists when it is needed. ``keep`` defaults to
+    ``image_refresh.keep_rollback_images``: one superseded build survives, so
+    next week's run has somewhere to fall back to as well.
+
+    Raises:
+        StepFailed: if the new build doesn't boot. ``DEFAULT_IMAGE`` has
+            been restored by then, so the lab is left working; the failure
+            is a report, not damage.
+    """
+    previous = current_default_image(ctx)
+    if keep is None:
+        keep = ctx.settings.image_refresh.keep_rollback_images
+
+    ctx.runner.announce(f"Making {name} live (was {previous or 'unset'})")
+    set_default_image(ctx, name)
+    try:
+        smoke.smoke_test_client(ctx)
+    except StepFailed as exc:
+        if previous is None:
+            raise StepFailed(
+                f"{name} failed its smoke test, and there was no previous "
+                f"DEFAULT_IMAGE to roll back to -- it is still live.\n{exc}"
+            ) from exc
+        ctx.runner.announce(f"{name} failed its smoke test; rolling back to {previous}")
+        set_default_image(ctx, previous)
+        raise StepFailed(
+            f"{name} failed its smoke test. DEFAULT_IMAGE has been rolled "
+            f"back to {previous}, which was booting before this run, so the "
+            f"clients are fine.\n{exc}"
+        ) from exc
+
+    prune_published_images(ctx, keep=keep)
 
 
 def raw_image_path(ctx: Context, image_name: str | None = None) -> Path:
@@ -550,8 +607,8 @@ def list_published_images(ctx: Context) -> list[str]:
     return sorted(names, reverse=True)
 
 
-def prune_published_images(ctx: Context) -> list[str]:
-    """Delete every published image except the one currently live.
+def prune_published_images(ctx: Context, *, keep: int = 1) -> list[str]:
+    """Delete superseded builds, keeping the live one and ``keep`` rollbacks.
 
     Nothing prunes a build automatically after it's superseded (see
     ``dated_image_name``), so they accumulate on disk *and* in the PXE
@@ -564,9 +621,26 @@ def prune_published_images(ctx: Context) -> list[str]:
     union of both directories' names rather than just one, since a build
     from before this tool existed may only have one half of the pair.
 
+    ``keep`` is how many *superseded* builds survive, newest first, on top
+    of the live one, which is never a candidate for deletion. It defaults
+    to 1 because the unattended weekly rebuild (see ``publish_image``)
+    needs somewhere to roll back to: last week's proven-to-boot image stays
+    on disk and in the menu, so recovering from a bad build is
+    ``image set-default <name>`` and a reboot rather than an hour-long
+    rebuild (Todd, 2026-09-12). Pass ``keep=0`` for the old behaviour of
+    leaving only the live image behind.
+
+    Dated names sort chronologically, so "newest first" is just a reverse
+    sort -- the same assumption ``dated_image_name`` already relies on.
+    Builds predating this tool's naming scheme sort wherever they sort,
+    which is fine: they're the oldest thing here either way, so they're
+    pruned first.
+
     Refuses to run if ``DEFAULT_IMAGE`` can't be determined, rather than
     guess which build is safe to keep.
     """
+    if keep < 0:
+        raise StepFailed(f"keep must not be negative, got {keep}.")
     live = current_default_image(ctx)
     if live is None:
         raise StepFailed(
@@ -575,7 +649,10 @@ def prune_published_images(ctx: Context) -> list[str]:
         )
     published = set(list_published_images(ctx))
     tftp_names = {p.name for p in ctx.runner.list_dirs(TFTP_IMAGE_DIR)}
-    stale = sorted((published | tftp_names) - {live}, reverse=True)
+    superseded = sorted((published | tftp_names) - {live}, reverse=True)
+    stale = superseded[keep:]
+    for name in superseded[:keep]:
+        ctx.runner.announce(f"Keeping {name} as a rollback target")
 
     for name in stale:
         ctx.runner.remove([PUBLISHED_IMAGE_DIR / f"{name}.img"])
@@ -583,6 +660,89 @@ def prune_published_images(ctx: Context) -> list[str]:
     if stale:
         ctx.runner.run(["ltsp", "ipxe"])
     return stale
+
+
+# ------------------------------------------------- the unattended rebuild
+
+REFRESH_UNIT = "ltsp-setup-image"
+REFRESH_SERVICE_PATH = Path("/etc/systemd/system") / f"{REFRESH_UNIT}.service"
+REFRESH_TIMER_PATH = Path("/etc/systemd/system") / f"{REFRESH_UNIT}.timer"
+
+
+def refresh_command(ctx: Context, config_file: Path | None) -> str:
+    """The exact ``ltsp-setup`` invocation the timer should run.
+
+    Built from config rather than hardcoded so that changing
+    ``image_refresh.stages`` and re-running ``image schedule`` is enough --
+    nobody has to remember that the real schedule lives in a unit file in
+    /etc and not in the config they just edited.
+    """
+    refresh = ctx.settings.image_refresh
+    argv = [entry_point(), "image", "refresh", "--publish", "--no-debug"]
+    for stage in refresh.stages:
+        argv += ["--stage", stage]
+    if config_file is not None:
+        argv += ["--config", str(config_file)]
+    return " ".join(argv)
+
+
+def install_refresh_timer(ctx: Context, config_file: Path | None = None) -> None:
+    """Install and enable the weekly unattended rebuild.
+
+    Two units, which is how systemd timers work: a oneshot service that does
+    the job and a timer that decides when. The service has no ``[Install]``
+    section of its own on purpose -- enabling the *timer* is what schedules
+    it, and a service that could also be enabled independently is a way to
+    accidentally run an hour-long image build at every boot.
+    """
+    refresh = ctx.settings.image_refresh
+    description = "Weekly LTSP client image rebuild"
+    ctx.runner.write(
+        REFRESH_SERVICE_PATH,
+        templates.render(
+            f"{REFRESH_UNIT}.service",
+            {"DESCRIPTION": description, "EXEC": refresh_command(ctx, config_file)},
+        ),
+        mode=0o644,
+    )
+    ctx.runner.write(
+        REFRESH_TIMER_PATH,
+        templates.render(
+            f"{REFRESH_UNIT}.timer",
+            {
+                "DESCRIPTION": f"{description} ({refresh.on_calendar})",
+                "ON_CALENDAR": refresh.on_calendar,
+                "RANDOMIZED_DELAY": refresh.randomized_delay_s,
+            },
+        ),
+        mode=0o644,
+    )
+    ctx.runner.run(["systemctl", "daemon-reload"])
+    ctx.runner.run(["systemctl", "enable", "--now", f"{REFRESH_UNIT}.timer"])
+
+
+def remove_refresh_timer(ctx: Context) -> None:
+    """Turn the weekly rebuild off and delete its units. Safe to run twice."""
+    ctx.runner.run(
+        ["systemctl", "disable", "--now", f"{REFRESH_UNIT}.timer"], check=False
+    )
+    ctx.runner.remove([REFRESH_TIMER_PATH, REFRESH_SERVICE_PATH])
+    ctx.runner.run(["systemctl", "daemon-reload"], check=False)
+
+
+def refresh_timer_status(ctx: Context) -> str:
+    """When the weekly rebuild last ran and when it runs next."""
+    if not ctx.runner.exists(REFRESH_TIMER_PATH):
+        return (
+            "The weekly rebuild is not scheduled.\n"
+            "Turn it on with:  sudo ltsp-setup image schedule --no-debug"
+        )
+    result = ctx.runner.run(
+        ["systemctl", "list-timers", "--all", f"{REFRESH_UNIT}.timer"],
+        check=False,
+        capture=True,
+    )
+    return (result.stdout or "").strip()
 
 
 def status(ctx: Context) -> str:

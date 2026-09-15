@@ -162,7 +162,7 @@ class Plan:
 
 def install_boot_unit(runner: Runner, role: str, config_file: Path | None) -> None:
     """Install and enable the unit that resumes setup after each reboot."""
-    executable = _entry_point()
+    executable = entry_point()
     command = f"{executable} {role} resume --no-debug"
     if config_file is not None:
         command += f" --config {config_file}"
@@ -182,7 +182,7 @@ def disable_boot_unit(runner: Runner) -> None:
     runner.run(["systemctl", "daemon-reload"], check=False)
 
 
-def _entry_point() -> str:
+def entry_point() -> str:
     """Absolute path to the installed ``ltsp-setup`` command.
 
     Tries PATH first, but falls back to the console script next to this

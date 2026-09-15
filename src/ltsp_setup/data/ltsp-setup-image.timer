@@ -1,0 +1,16 @@
+[Unit]
+Description=$DESCRIPTION
+
+[Timer]
+OnCalendar=$ON_CALENDAR
+# Spread the start so this never lands at exactly the same instant as every
+# other timer on the machine.
+RandomizedDelaySec=$RANDOMIZED_DELAY
+
+# Deliberately NOT Persistent=true. A missed run should be skipped, not
+# caught up on: catching up means starting an hour-long rebuild at whatever
+# moment the server next boots, which is most likely Monday morning with a
+# room full of students waiting on it. Missing a week costs nothing.
+
+[Install]
+WantedBy=timers.target

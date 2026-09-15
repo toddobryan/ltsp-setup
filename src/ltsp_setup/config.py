@@ -212,6 +212,65 @@ class ClientTemplate:
 
 
 @dataclass(frozen=True)
+class SmokeTest:
+    """The netboot check run against a fresh build before it is left live.
+
+    ``vm_name`` is a diskless libvirt VM bridged onto the LTSP network, with
+    ``<boot dev='network'/>`` and no disk at all -- a thin client in every
+    respect except that it lives on the server. Booting it is the only way
+    to find out whether an image actually works without walking to a lab
+    machine, which an unattended rebuild obviously can't do.
+
+    The check watches for two things in turn, because they fail differently
+    and the difference is the whole diagnosis: a *fresh DHCP lease* (PXE,
+    TFTP and the kernel got that far) and then an *epoptes-client
+    connection* back to the server (the squashfs mounted and userspace came
+    all the way up). iPXE itself never does the second one, so it can't
+    produce a false pass.
+    """
+
+    vm_name: str = "pxe-test-client"
+    connect_uri: str = "qemu:///system"
+    # dnsmasq's lease database -- world-readable, and the only place the
+    # test client's address can be looked up before it answers anything.
+    lease_file: Path = field(
+        default_factory=lambda: Path("/var/lib/misc/dnsmasq.leases")
+    )
+    # What epoptes-client connects back to. It is in CLIENT_PACKAGES, so
+    # every image this tool builds has it; see steps/client.py.
+    agent_port: int = 789
+    # A cold netboot of a several-gigabyte squashfs over NFS is not quick.
+    boot_timeout_s: int = 600
+    shutdown_timeout_s: int = 120
+
+
+@dataclass(frozen=True)
+class ImageRefresh:
+    """The unattended rebuild that runs from a systemd timer.
+
+    Todd's ask (2026-09-12): apt-upgrade the template, rebuild, and make the
+    result live over the weekend, "keeping the last proven-to-boot image
+    available for quick rollback". That last clause is what
+    ``keep_rollback_images`` buys -- see steps/image.py::prune_published_images.
+    """
+
+    # systemd OnCalendar= expression. Sunday small hours: nobody is logged
+    # in, and a failure has a whole day of slack before Monday morning.
+    on_calendar: str = "Sun *-*-* 02:00:00"
+    # Spread over half an hour so a rebuild never lands at exactly the same
+    # instant as every other timer on the box.
+    randomized_delay_s: int = 1800
+    # Which client stages to run on the template first. Just `mirrors` (apt
+    # update and upgrade) -- `apps` and `desktop` change what is installed
+    # or configured, which is a human's decision, not a weekly one.
+    stages: tuple[str, ...] = ("mirrors",)
+    # How many superseded builds to keep alongside the live one. 1 means
+    # last week's image stays on disk and in the PXE menu, so reverting is
+    # `image set-default <name>` and a reboot, with no rebuild.
+    keep_rollback_images: int = 1
+
+
+@dataclass(frozen=True)
 class Students:
     """Where student accounts live on the server, and how to tell them apart
     from admin accounts.
@@ -263,11 +322,22 @@ class Settings:
     """Everything the setup commands need to know."""
 
     admin_user: str = "sysadmin"
+
+    # Passed to every apt-get invocation as -o DPkg::Lock::Timeout=. Without
+    # it, apt exits immediately if another process holds the dpkg lock --
+    # which unattended-upgrades routinely does in the middle of the night,
+    # exactly when the weekly image rebuild runs. Waiting ten minutes for
+    # the lock beats failing the whole rebuild over a few seconds of
+    # contention.
+    apt_lock_timeout_s: int = 600
+
     mirrors: Mirrors = field(default_factory=Mirrors)
     networking: Networking = field(default_factory=Networking)
     apps: Apps = field(default_factory=Apps)
     lab: Lab = field(default_factory=Lab)
     client_template: ClientTemplate = field(default_factory=ClientTemplate)
+    smoke_test: SmokeTest = field(default_factory=SmokeTest)
+    image_refresh: ImageRefresh = field(default_factory=ImageRefresh)
     students: Students = field(default_factory=Students)
 
 

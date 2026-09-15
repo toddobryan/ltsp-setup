@@ -89,6 +89,24 @@ class Libvirt:
                 return fields[3].split("/")[0]
         return None
 
+    def mac_address(self, name: str) -> str:
+        """The MAC of the VM's first network interface.
+
+        Read from libvirt rather than kept in config, so there is only one
+        place a VM's MAC is written down and no way for the two to drift.
+        The smoke-test client is bridged onto the LTSP network rather than
+        a libvirt-managed one, so ``domifaddr`` can't see its address --
+        the MAC is the only handle on it, and its address has to be looked
+        up in dnsmasq's leases instead. See ``steps/smoke.py``.
+        """
+        output = self.virsh("domiflist", name)
+        for line in output.splitlines():
+            fields = line.split()
+            # e.g. "vnet3  bridge  br0  e1000  52:54:00:2c:5d:65"
+            if len(fields) >= 5 and fields[4].count(":") == 5:
+                return fields[4]
+        raise StepFailed(f"Could not find a MAC address for {name!r} in:\n{output}")
+
     def network_exists(self, name: str) -> bool:
         """True if a libvirt network of this name is defined."""
         if self.runner.dry_run:
