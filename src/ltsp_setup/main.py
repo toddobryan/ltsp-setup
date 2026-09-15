@@ -338,6 +338,29 @@ def image_list(config: ConfigOption = None) -> None:
             f"[yellow]warning:[/yellow] DEFAULT_IMAGE is {current!r}, which "
             f"isn't among the published images above."
         )
+    # Whether the others are reachable from a client's console is the other
+    # half of "what will actually boot", and this is the command you run
+    # when something is wrong.
+    timeout = image.current_menu_timeout(ctx)
+    if timeout == -1:
+        console.print(
+            "\nBoot menu is [bold]hidden[/bold]; clients boot the live image "
+            "and nothing else."
+        )
+        if len(names) > 1:
+            console.print(
+                "  To let a client pick one of the others:  "
+                "sudo ltsp-setup image show-menu --no-debug"
+            )
+    else:
+        shown = 5000 if timeout is None else timeout
+        console.print(
+            f"\nBoot menu is [bold]shown[/bold] for {shown / 1000:g}s, so a "
+            "client can boot any image above."
+        )
+        console.print(
+            "  Hide it again with:  sudo ltsp-setup image hide-menu --no-debug"
+        )
 
 
 @image_app.command("refresh")
@@ -424,6 +447,55 @@ def image_prune(
         console.print("Nothing to prune -- nothing is published but the keepers.")
         return
     console.print(f"[bold]{len(pruned)} image(s) removed:[/bold] {', '.join(pruned)}")
+
+
+@image_app.command("show-menu")
+def image_show_menu(
+    seconds: Annotated[
+        Optional[float],
+        typer.Option(
+            "--seconds",
+            help="How long the menu waits before booting DEFAULT_IMAGE. "
+            "Defaults to pxe_menu_visible_timeout_ms (10s).",
+        ),
+    ] = None,
+    debug: DebugOption = True,
+    config: ConfigOption = None,
+) -> None:
+    """Bring the PXE boot menu back, so a client can pick a different image.
+
+    The escape hatch for a bad image being live: showing the menu is what
+    lets someone at a thin client choose the rollback instead, and what
+    gets at iPXE's own options (shell, memtest, boot from the local disk)
+    when no LTSP image works at all. Run `image hide-menu` afterwards --
+    nothing re-hides it on its own.
+    """
+    _require_root(debug)
+    ctx = _context(debug, config)
+    ms = (
+        ctx.settings.pxe_menu_visible_timeout_ms
+        if seconds is None
+        else round(seconds * 1000)
+    )
+    image.set_menu_timeout(ctx, ms)
+    console.print(
+        f"[bold green]Menu shown:[/bold green] clients wait {ms / 1000:g}s "
+        "before booting the default image."
+    )
+    console.print("  Hide it again with:  sudo ltsp-setup image hide-menu --no-debug")
+
+
+@image_app.command("hide-menu")
+def image_hide_menu(debug: DebugOption = True, config: ConfigOption = None) -> None:
+    """Hide the PXE boot menu again, so clients boot only DEFAULT_IMAGE.
+
+    The normal state. With the menu up, a student can boot whichever
+    published image they like, including the rollback `image prune`
+    deliberately keeps around.
+    """
+    _require_root(debug)
+    image.set_menu_timeout(_context(debug, config), -1)
+    console.print("[bold green]Menu hidden:[/bold green] clients boot DEFAULT_IMAGE.")
 
 
 @image_app.command("smoke-test")

@@ -347,6 +347,14 @@ class Settings:
     # not need it.
     pxe_menu_timeout_ms: int = -1
 
+    # What `image show-menu` sets MENU_TIMEOUT to when the menu has to come
+    # back -- a bad image is live and someone at a client needs to pick the
+    # rollback, or needs iPXE's own options (shell, memtest, boot from local
+    # disk) with no working LTSP image at all. Long enough to read and act
+    # on at a machine that is booting, short enough not to hold up a room
+    # full of clients that are fine.
+    pxe_menu_visible_timeout_ms: int = 10000
+
     mirrors: Mirrors = field(default_factory=Mirrors)
     networking: Networking = field(default_factory=Networking)
     apps: Apps = field(default_factory=Apps)

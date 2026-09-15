@@ -165,21 +165,53 @@ class TestWithDefaultImage:
     )
 
     def test_inserts_when_missing(self) -> None:
-        result = image._with_default_image(self.SAMPLE, "mint-2026-08-20")
+        result = image._with_server_setting(
+            self.SAMPLE, "DEFAULT_IMAGE", "mint-2026-08-20"
+        )
         assert 'DEFAULT_IMAGE="mint-2026-08-20"' in result
         assert "NFS_HOME=1" in result
         assert 'FSTAB_HOME="server:/home /home nfs defaults 0 0"' in result
 
     def test_replaces_in_place(self) -> None:
-        first = image._with_default_image(self.SAMPLE, "mint-2026-08-20")
-        second = image._with_default_image(first, "mint-2026-08-21")
+        first = image._with_server_setting(
+            self.SAMPLE, "DEFAULT_IMAGE", "mint-2026-08-20"
+        )
+        second = image._with_server_setting(first, "DEFAULT_IMAGE", "mint-2026-08-21")
         assert 'DEFAULT_IMAGE="mint-2026-08-21"' in second
         assert "mint-2026-08-20" not in second
         assert second.count("DEFAULT_IMAGE") == 1
 
     def test_raises_without_a_server_section(self) -> None:
         with pytest.raises(StepFailed, match=r"\[server\]"):
-            image._with_default_image("[clients]\nFOO=1\n", "mint-2026-08-20")
+            image._with_server_setting(
+                "[clients]\nFOO=1\n", "DEFAULT_IMAGE", "mint-2026-08-20"
+            )
+
+    def test_only_rewrites_the_server_sections_copy_of_a_key(self) -> None:
+        """ltsp.conf lets DEFAULT_IMAGE and MENU_TIMEOUT be set per-client
+        under a [mac:address] section too. Those belong to whoever wrote
+        them; only [server]'s copy is ours to change.
+        """
+        content = (
+            "[server]\n"
+            'DEFAULT_IMAGE="mint-old"\n'
+            "\n"
+            "[aa:bb:cc:dd:ee:ff]\n"
+            'DEFAULT_IMAGE="special-client-image"\n'
+        )
+        result = image._with_server_setting(content, "DEFAULT_IMAGE", "mint-new")
+        assert 'DEFAULT_IMAGE="mint-new"' in result
+        assert 'DEFAULT_IMAGE="special-client-image"' in result
+        assert "mint-old" not in result
+
+    def test_settings_go_in_alongside_each_other(self) -> None:
+        """Two keys patched in turn both survive -- the second insert must
+        not land on top of the first."""
+        result = image._with_server_setting(self.SAMPLE, "DEFAULT_IMAGE", "mint-1")
+        result = image._with_server_setting(result, "MENU_TIMEOUT", -1)
+        assert 'DEFAULT_IMAGE="mint-1"' in result
+        assert 'MENU_TIMEOUT="-1"' in result
+        assert "NFS_HOME=1" in result
 
 
 def test_current_default_image_reads_the_live_file(
@@ -610,6 +642,84 @@ class TestRefreshTimer:
 
         assert ["systemctl", "disable", "--now", "ltsp-setup-image.timer"] in calls
         assert removed == [[image.REFRESH_TIMER_PATH, image.REFRESH_SERVICE_PATH]]
+
+
+class TestMenuTimeout:
+    """The escape hatch: the menu is hidden normally, but has to be able to
+    come back when the live image is bad and someone at a client needs to
+    pick the rollback (Todd, 2026-09-15).
+    """
+
+    def _ctx(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+    ) -> Context:
+        conf = tmp_path / "ltsp.conf"
+        conf.write_text(body)
+        monkeypatch.setattr(image, "LTSP_CONF", conf)
+        ctx = Context(Settings(), Runner(dry_run=False))
+        monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+        return ctx
+
+    def test_showing_then_hiding_round_trips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = self._ctx(tmp_path, monkeypatch, '[server]\nDEFAULT_IMAGE="mint"\n')
+
+        image.set_menu_timeout(ctx, 10000)
+        assert image.current_menu_timeout(ctx) == 10000
+
+        image.set_menu_timeout(ctx, -1)
+        assert image.current_menu_timeout(ctx) == -1
+        # The image it boots is untouched by either.
+        assert image.current_default_image(ctx) == "mint"
+
+    def test_regenerates_the_boot_menu(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Editing ltsp.conf changes nothing on its own -- ltsp.ipxe is
+        generated from it, and that is what clients actually fetch."""
+        ctx = self._ctx(tmp_path, monkeypatch, "[server]\n")
+        calls = _record_calls(ctx, monkeypatch)
+
+        image.set_menu_timeout(ctx, 5000)
+
+        assert ["ltsp", "ipxe"] in calls
+
+    def test_no_setting_means_ltsps_own_default_not_hidden(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A file with no MENU_TIMEOUT gets 5000ms from ltsp.ipxe's own
+        `isset ${menu-timeout} || set menu-timeout 5000`. Reporting that as
+        "hidden" would be exactly backwards.
+        """
+        ctx = self._ctx(tmp_path, monkeypatch, "[server]\n")
+        assert image.current_menu_timeout(ctx) is None
+
+    def test_a_per_client_override_is_not_mistaken_for_the_servers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = self._ctx(
+            tmp_path,
+            monkeypatch,
+            '[server]\nMENU_TIMEOUT="-1"\n\n[aa:bb:cc:dd:ee:ff]\nMENU_TIMEOUT="9000"\n',
+        )
+        assert image.current_menu_timeout(ctx) == -1
+
+    def test_a_nonsense_value_is_reported_not_guessed_at(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = self._ctx(tmp_path, monkeypatch, '[server]\nMENU_TIMEOUT="soon"\n')
+        with pytest.raises(StepFailed, match="not a number"):
+            image.current_menu_timeout(ctx)
+
+    def test_below_minus_one_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """-1 is LTSP's "hide" sentinel; -2 is not a smaller version of it,
+        it is a value iPXE will do something unpredictable with."""
+        ctx = self._ctx(tmp_path, monkeypatch, "[server]\n")
+        with pytest.raises(StepFailed, match="MENU_TIMEOUT"):
+            image.set_menu_timeout(ctx, -2)
 
 
 def _setup_prune(

@@ -520,11 +520,12 @@ def build_image(ctx: Context) -> str:
     return run_ltsp_image(ctx, name)
 
 
-_DEFAULT_IMAGE_LINE = re.compile(r"^(\s*)DEFAULT_IMAGE\s*=.*$", re.MULTILINE)
+def _setting_line(key: str) -> re.Pattern[str]:
+    return re.compile(rf"^\s*{re.escape(key)}\s*=.*$")
 
 
-def _with_default_image(content: str, image_name: str) -> str:
-    """Return ``ltsp.conf``'s content with ``DEFAULT_IMAGE`` set in ``[server]``.
+def _with_server_setting(content: str, key: str, value: object) -> str:
+    """Return ``ltsp.conf``'s content with ``key`` set in its ``[server]`` section.
 
     Patches just that one line -- or inserts it right after the ``[server]``
     header if it's missing -- and leaves everything else untouched. Unlike
@@ -532,8 +533,15 @@ def _with_default_image(content: str, image_name: str) -> str:
     template, this is safe to run against a server whose ``ltsp.conf`` has
     real hand-written content (NFS options, per-client sections, ...) that
     predates this tool and isn't reflected in ``data/ltsp.conf``.
+
+    Section-aware on purpose. ``ltsp.conf`` lets ``DEFAULT_IMAGE`` and
+    ``MENU_TIMEOUT`` be set per-client under a ``[mac:address]`` section as
+    well as globally under ``[server]`` (see ``man ltsp.conf``), and
+    production's file carries commented-out examples of exactly that. Only
+    the ``[server]`` one is ours to rewrite.
     """
-    new_line = f'DEFAULT_IMAGE="{image_name}"'
+    pattern = _setting_line(key)
+    new_line = f'{key}="{value}"'
     lines = content.splitlines()
     section = None
     for i, line in enumerate(lines):
@@ -541,7 +549,7 @@ def _with_default_image(content: str, image_name: str) -> str:
         if stripped.startswith("[") and stripped.endswith("]"):
             section = stripped[1:-1]
             continue
-        if section == "server" and _DEFAULT_IMAGE_LINE.match(line):
+        if section == "server" and pattern.match(line):
             lines[i] = new_line
             return "\n".join(lines) + "\n"
     for i, line in enumerate(lines):
@@ -549,19 +557,67 @@ def _with_default_image(content: str, image_name: str) -> str:
             lines.insert(i + 1, new_line)
             return "\n".join(lines) + "\n"
     raise StepFailed(
-        f"{LTSP_CONF} has no [server] section to add DEFAULT_IMAGE to. "
+        f"{LTSP_CONF} has no [server] section to add {key} to. "
         "Add one by hand first."
     )
 
 
-def current_default_image(ctx: Context) -> str | None:
-    """Whatever ``DEFAULT_IMAGE`` in ``ltsp.conf`` currently names, if any."""
+def current_server_setting(ctx: Context, key: str) -> str | None:
+    """Whatever ``key`` is set to in ``ltsp.conf``'s ``[server]`` section.
+
+    Section-aware for the same reason ``_with_server_setting`` is: a
+    per-client ``[mac:address]`` override of the same key is not the value
+    the server is running with, and reading it as though it were would make
+    ``publish_image`` roll back to the wrong image.
+    """
     if not LTSP_CONF.is_file():
         return None
-    match = _DEFAULT_IMAGE_LINE.search(ctx.runner.read_text(LTSP_CONF))
-    if match is None:
+    pattern = _setting_line(key)
+    section = None
+    for line in ctx.runner.read_text(LTSP_CONF).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1]
+            continue
+        if section == "server" and pattern.match(line):
+            return line.split("=", 1)[1].strip().strip('"')
+    return None
+
+
+def current_default_image(ctx: Context) -> str | None:
+    """Whatever ``DEFAULT_IMAGE`` in ``ltsp.conf`` currently names, if any."""
+    return current_server_setting(ctx, "DEFAULT_IMAGE")
+
+
+def current_menu_timeout(ctx: Context) -> int | None:
+    """``MENU_TIMEOUT`` in milliseconds, or None if the file doesn't set one.
+
+    None means LTSP's own built-in default of 5000ms, not "no menu" -- see
+    the generated ``ltsp.ipxe``, which does ``isset ${menu-timeout} || set
+    menu-timeout 5000``.
+    """
+    raw = current_server_setting(ctx, "MENU_TIMEOUT")
+    if raw is None:
         return None
-    return match.group(0).split("=", 1)[1].strip().strip('"')
+    try:
+        return int(raw)
+    except ValueError:
+        raise StepFailed(
+            f"MENU_TIMEOUT in {LTSP_CONF} is {raw!r}, which is not a number "
+            "of milliseconds. Fix it by hand."
+        ) from None
+
+
+def _write_server_setting(ctx: Context, key: str, value: object) -> None:
+    """Set one ``[server]`` key and regenerate the iPXE menu from it."""
+    if not ctx.runner.dry_run and not LTSP_CONF.is_file():
+        raise StepFailed(
+            f"{LTSP_CONF} does not exist yet. Run the server's `ltsp` stage "
+            "first, or create it by hand with a [server] section."
+        )
+    current = ctx.runner.read_text(LTSP_CONF) if LTSP_CONF.is_file() else "[server]\n"
+    ctx.runner.write(LTSP_CONF, _with_server_setting(current, key, value), mode=0o660)
+    ctx.runner.run(["ltsp", "ipxe"])
 
 
 def set_default_image(ctx: Context, image_name: str) -> None:
@@ -574,14 +630,30 @@ def set_default_image(ctx: Context, image_name: str) -> None:
     per-image kernel/initrd were already produced by ``ltsp image`` itself
     when that build ran.
     """
-    if not ctx.runner.dry_run and not LTSP_CONF.is_file():
+    _write_server_setting(ctx, "DEFAULT_IMAGE", image_name)
+
+
+def set_menu_timeout(ctx: Context, milliseconds: int) -> None:
+    """Set ``MENU_TIMEOUT`` and regenerate the iPXE menu.
+
+    ``-1`` hides the menu entirely, which is the configured default (see
+    ``Settings.pxe_menu_timeout_ms``) because its only effect in normal use
+    is to let a student boot an image they shouldn't be on.
+
+    Anything else shows it, and that is the escape hatch: when the live
+    image is bad, showing the menu is what lets someone at a client pick
+    the rollback instead, and what gets at iPXE's own options (shell,
+    memtest, boot from local disk) without a working LTSP image at all
+    (Todd, 2026-09-15). Hiding it again is a separate, deliberate step --
+    nothing re-hides it on its own, since the reason it was shown may not
+    be fixed yet.
+    """
+    if milliseconds < -1:
         raise StepFailed(
-            f"{LTSP_CONF} does not exist yet. Run the server's `ltsp` stage "
-            "first, or create it by hand with a [server] section."
+            f"MENU_TIMEOUT must be -1 (hide the menu) or a non-negative "
+            f"number of milliseconds, not {milliseconds}."
         )
-    current = ctx.runner.read_text(LTSP_CONF) if LTSP_CONF.is_file() else "[server]\n"
-    ctx.runner.write(LTSP_CONF, _with_default_image(current, image_name), mode=0o660)
-    ctx.runner.run(["ltsp", "ipxe"])
+    _write_server_setting(ctx, "MENU_TIMEOUT", milliseconds)
 
 
 def list_published_images(ctx: Context) -> list[str]:

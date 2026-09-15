@@ -171,6 +171,33 @@ turned up two more real gaps, both now fixed:
    `<name>.img.old` around is just a way for some clients to end up
    booting a stale version by accident.
 
+**The boot menu is hidden, with a command to bring it back** (2026-09-15).
+`MENU_TIMEOUT="-1"` in `[server]` makes clients boot `DEFAULT_IMAGE` and
+offer no choice. The menu's order can't be changed — `list_img_names` ends
+in a plain `sort -u`, so entries run ascending by name and the newest build
+is last — but the order never mattered: the generated file does
+`choose --default ${img}` from `DEFAULT_IMAGE`, so the pre-selected row and
+the timeout's choice are already right wherever the entry sits. What the
+menu *did* do was let a student boot an image they shouldn't be on, which is
+why old builds were being deleted in the first place (2026-08-27), and
+`image prune` now deliberately keeps a rollback around for them to find.
+
+Hiding it costs the console escape hatch, so `image show-menu` /
+`image hide-menu` put it back and take it away again. That matters in
+exactly the case the rollback exists for: a bad image is live, and someone
+at a client needs to pick the previous one — or needs iPXE's own options
+(shell, memtest, boot from local disk) when no LTSP image works at all.
+Nothing re-hides the menu automatically, because the reason it was shown may
+not be fixed yet.
+
+Both of these patch `ltsp.conf` in place via `_with_server_setting`, which is
+section-aware: `ltsp.conf` allows per-client `DEFAULT_IMAGE` and
+`MENU_TIMEOUT` under `[mac:address]` sections, and production's file carries
+commented-out examples. Only `[server]`'s copy is ours to rewrite, and
+`current_server_setting` reads it the same way — reading a per-client
+override as though it were the server's would make `publish_image` roll back
+to the wrong image.
+
 Verified for real against `ltsp-client` on the isolated lab network,
 straight from the server's own dnsmasq log: PXE DHCP → TFTP serves
 `ltsp.ipxe`, which now resolves `img` to `ltsp-client-template` (visible
