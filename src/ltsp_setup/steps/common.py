@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ltsp_setup import templates
@@ -91,6 +92,136 @@ def apt_upgrade(ctx: Context) -> None:
         _apt(ctx, "upgrade", "-y"),
         env={"DEBIAN_FRONTEND": "noninteractive"},
     )
+
+
+def apt_autoremove(ctx: Context) -> None:
+    """Remove packages nothing needs any more, config files included.
+
+    ``--purge`` because this runs against the client template, whose whole
+    disk becomes the shipped image: a removed package's leftover config is
+    dead weight on every thin client.
+
+    Worth knowing what this does *not* do here, since it's the reason it
+    was asked for: it will not remove old kernels. On Mint, kernels are
+    marked manually installed (mintupdate installs ``linux-image-<version>``
+    directly rather than letting the ``-hwe`` metapackage pull it in), and
+    ``autoremove`` only ever touches automatically-installed packages. On
+    this server, ``apt-get autoremove --dry-run`` reports "0 to remove"
+    with seven kernels on disk. See ``purge_old_kernels`` for that job.
+    """
+    ctx.runner.run(
+        _apt(ctx, "autoremove", "--purge", "-y"),
+        env={"DEBIAN_FRONTEND": "noninteractive"},
+    )
+
+
+# linux-image-7.0.0-31-generic, linux-headers-7.0.0-31-generic,
+# linux-modules-extra-7.0.0-31-generic, ... but deliberately NOT the
+# unversioned metapackages (linux-image-generic-hwe-24.04), which are what
+# pull the next kernel in and must survive. The alternation puts the longer
+# prefixes first so "image-unsigned" isn't half-matched by "image".
+_KERNEL_PACKAGE = re.compile(
+    r"^linux-(?:image-unsigned|modules-extra|image|headers|modules|tools)-"
+    r"(\d+(?:\.\d+)*-\d+)-"
+)
+_KERNEL_VERSION = re.compile(r"^(\d+(?:\.\d+)*-\d+)")
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    """Sortable form of a kernel version like ``7.0.0-31``.
+
+    Compared numerically rather than as text, because "7.0.0-9" sorts after
+    "7.0.0-31" as a string and picking the wrong "newest" here would purge
+    the kernel the image is supposed to ship.
+    """
+    return tuple(int(part) for part in re.split(r"[.-]", version))
+
+
+def running_kernel_version(ctx: Context) -> str | None:
+    """The version part of ``uname -r``, e.g. ``7.0.0-31`` — or None."""
+    match = _KERNEL_VERSION.match(ctx.runner.read_command(["uname", "-r"]).strip())
+    return match.group(1) if match else None
+
+
+def installed_kernels(ctx: Context) -> dict[str, list[str]]:
+    """Installed kernel packages, grouped by the version they belong to."""
+    # Patterns that match nothing make dpkg-query exit non-zero, which is not
+    # an error here -- it just means no kernel of that shape is installed.
+    listing = ctx.runner.read_command(
+        [
+            "dpkg-query",
+            "-W",
+            "-f=${db:Status-Abbrev}${binary:Package}\n",
+            "linux-image-*",
+            "linux-headers-*",
+            "linux-modules-*",
+            "linux-tools-*",
+        ]
+    )
+    found: dict[str, list[str]] = {}
+    for line in listing.splitlines():
+        # "${db:Status-Abbrev}" is a three-character field, e.g. "ii ".
+        # Anything but "ii" is half-installed, deconfigured or merely known
+        # about, and has no files in /boot to reclaim.
+        if not line.startswith("ii"):
+            continue
+        package = line[3:].strip()
+        match = _KERNEL_PACKAGE.match(package)
+        if match:
+            found.setdefault(match.group(1), []).append(package)
+    return found
+
+
+def purge_old_kernels(ctx: Context) -> list[str]:
+    """Purge every installed kernel except the newest and the running one.
+
+    Old kernels are what actually fill ``/boot`` (Todd, 2026-08-27, after
+    an ``autoremove`` left ``6.14.0-37`` sitting next to ``7.0.0-30``), and
+    every one of them is carried in the shipped image at roughly a hundred
+    megabytes apiece. ``apt autoremove`` cannot help: Mint marks kernels
+    manually installed, so autoremove never considers them.
+
+    Two versions are kept, not one, and the running kernel is never
+    removed. Removing a running kernel means forcing dpkg past its own
+    safety check, which is not something to do unattended at one in the
+    morning against the machine that becomes every client's root
+    filesystem.
+
+    That leaves the template at two kernels after an upgrade rather than
+    one -- the one it booted and the one just installed. It does not
+    accumulate beyond that: ``image refresh`` starts the template cold
+    every run, GRUB boots the newest, and so the *previous* run's kernel is
+    no longer running and gets purged by the next one. Two is the steady
+    state, against seven on this server today.
+
+    Returns:
+        The package names purged, newest-first by version.
+    """
+    running = running_kernel_version(ctx)
+    by_version = installed_kernels(ctx)
+    if running is None:
+        ctx.runner.announce(
+            "Could not tell which kernel is running; leaving old kernels alone"
+        )
+        return []
+    if len(by_version) <= 1:
+        return []
+
+    newest = max(by_version, key=_version_key)
+    doomed = sorted(set(by_version) - {newest, running}, key=_version_key, reverse=True)
+    packages = [name for version in doomed for name in sorted(by_version[version])]
+    if not packages:
+        return []
+
+    ctx.runner.announce(
+        f"Purging {len(doomed)} old kernel(s) ({', '.join(doomed)}); keeping "
+        f"{newest} (newest) and {running} (running)"
+    )
+    ctx.runner.run(
+        _apt(ctx, "purge", "-y", *packages),
+        env={"DEBIAN_FRONTEND": "noninteractive"},
+    )
+    return packages
 
 
 def apt_install(ctx: Context, packages: list[str], *, recommends: bool = True) -> None:

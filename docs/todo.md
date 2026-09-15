@@ -78,10 +78,27 @@ that breaks:
       lease check compares expiry timestamps, on the assumption that a
       booting client always renews. A client that reuses an unexpired lease
       without touching dnsmasq would time out at stage one.
+- [ ] **Check the new image's kernel count and size.** `--stage mirrors`
+      now runs `apt autoremove --purge` and `purge_old_kernels` after the
+      upgrade. The expected steady state is *two* kernels in the image (the
+      one the template booted, plus the one the upgrade installed), not one:
+      the running kernel is never removed, and it becomes removable on the
+      next run once GRUB has booted the newer one. If the count keeps
+      climbing, something about that assumption is wrong.
 - [ ] **Run it by hand first**: `sudo ltsp-setup image smoke-test --no-debug`
       against the image that's already live. It should pass in a few
       minutes. That isolates the smoke test from the rebuild, so a failure
       on Sunday morning is unambiguous.
+
+## Worth doing sometime
+
+- [ ] **The server itself has 15 kernel versions installed** (noticed
+      2026-09-15, ~58 packages). `purge_old_kernels` would take 14 of them
+      and keep the running `7.0.0-31`, but nothing calls it against the
+      server outside `server stage mirrors`, which also rewrites
+      sources.list and runs a full upgrade — far more than is wanted here.
+      Either a small `ltsp-setup server purge-kernels`, or just do it by
+      hand once.
 
 ## Done
 

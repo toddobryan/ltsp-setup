@@ -20,6 +20,13 @@ def _mirrors_and_upgrade(ctx: Context) -> None:
     common.apt_update(ctx)
     common.install_prerequisites(ctx)
     common.apt_upgrade(ctx)
+    # Housekeeping, after the upgrade rather than before, so it acts on what
+    # the upgrade just superseded. Both matter more here than on an ordinary
+    # machine: the client template's whole disk becomes the shipped image,
+    # so anything left behind is carried by every thin client, and this runs
+    # unattended every week now (Todd, 2026-09-15).
+    common.apt_autoremove(ctx)
+    common.purge_old_kernels(ctx)
 
 
 def _apps(ctx: Context) -> None:

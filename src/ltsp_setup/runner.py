@@ -206,6 +206,27 @@ class Runner:
         """
         return path.read_text()
 
+    def read_command(self, argv: Sequence[str]) -> str:
+        """Run a read-only command and return its stdout.
+
+        Always runs for real, even in a dry run -- inspection, not a change,
+        the same reasoning as :meth:`read_text`. :meth:`run` deliberately
+        fakes an empty result during a dry run, which is right for commands
+        that *do* something and wrong for ones that only report: a preview
+        built on empty output isn't a cautious preview, it's a blank one.
+        Use this only for commands with no side effects.
+
+        Returns an empty string if the command isn't there or fails, so a
+        caller can treat "nothing to report" and "nothing installed" alike.
+        """
+        argv = [str(a) for a in argv]
+        logger.info("read: %s", shlex.join(argv))
+        try:
+            result = subprocess.run(argv, text=True, capture_output=True, check=False)
+        except OSError:
+            return ""
+        return result.stdout or ""
+
     def exists(self, path: Path) -> bool:
         """True if ``path`` exists.
 
