@@ -331,6 +331,22 @@ class Settings:
     # contention.
     apt_lock_timeout_s: int = 600
 
+    # MENU_TIMEOUT in ltsp.conf's [server] section: how long, in
+    # milliseconds, `ltsp ipxe`'s generated boot menu waits before booting
+    # DEFAULT_IMAGE. -1 is special -- it hides the menu entirely and boots
+    # DEFAULT_IMAGE straight away.
+    #
+    # Hidden by default (Todd, 2026-09-15). The menu's only real audience is
+    # a student at a thin client, and the only thing it lets them do is pick
+    # an image that isn't the one they are supposed to be on -- which is why
+    # old builds were being deleted in the first place (2026-08-27). Now that
+    # `image prune` deliberately keeps a rollback around, there is always a
+    # second entry to pick wrongly, so hiding the menu matters more than it
+    # did. Set it to 5000 to get the menu back while debugging a bad build at
+    # a machine; the rollback path itself (`image set-default`, reboot) does
+    # not need it.
+    pxe_menu_timeout_ms: int = -1
+
     mirrors: Mirrors = field(default_factory=Mirrors)
     networking: Networking = field(default_factory=Networking)
     apps: Apps = field(default_factory=Apps)

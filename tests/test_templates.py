@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from ltsp_setup import templates
+from ltsp_setup.config import Settings
 
 
 def test_missing_placeholder_fails_loudly() -> None:
@@ -31,17 +32,41 @@ def test_rust_profile_keeps_literal_shell_variables() -> None:
 def test_ltsp_conf_sets_default_image() -> None:
     text = templates.render(
         "ltsp.conf",
-        {"DEFAULT_IMAGE": "ltsp-client-template", "LTSP_ADDRESS": "192.168.67.1"},
+        {
+            "DEFAULT_IMAGE": "ltsp-client-template",
+            "LTSP_ADDRESS": "192.168.67.1",
+            "MENU_TIMEOUT": -1,
+        },
     )
     assert "[server]" in text
     assert 'DEFAULT_IMAGE="ltsp-client-template"' in text
     assert "NFS_HOME=1" in text
 
 
+def test_ltsp_conf_hides_the_boot_menu_by_default() -> None:
+    """-1 means the client boots DEFAULT_IMAGE without offering a menu. The
+    menu's only effect otherwise is to let a student pick an image they
+    should not be on (Todd, 2026-09-15).
+    """
+    text = templates.render(
+        "ltsp.conf",
+        {
+            "DEFAULT_IMAGE": "ltsp-client-template",
+            "LTSP_ADDRESS": "192.168.67.1",
+            "MENU_TIMEOUT": Settings().pxe_menu_timeout_ms,
+        },
+    )
+    assert 'MENU_TIMEOUT="-1"' in text
+
+
 def test_ltsp_conf_applies_to_clients_not_the_server() -> None:
     text = templates.render(
         "ltsp.conf",
-        {"DEFAULT_IMAGE": "ltsp-client-template", "LTSP_ADDRESS": "192.168.67.1"},
+        {
+            "DEFAULT_IMAGE": "ltsp-client-template",
+            "LTSP_ADDRESS": "192.168.67.1",
+            "MENU_TIMEOUT": -1,
+        },
     )
     assert "[clients]" in text
     assert 'LIGHTDM_CONF="greeter-hide-users=true"' in text

@@ -161,6 +161,7 @@ def configure_ltsp(ctx: Context) -> None:
             {
                 "DEFAULT_IMAGE": ctx.settings.client_template.image_name,
                 "LTSP_ADDRESS": ctx.settings.networking.ltsp_address,
+                "MENU_TIMEOUT": ctx.settings.pxe_menu_timeout_ms,
             },
         ),
         mode=0o660,

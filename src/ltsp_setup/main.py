@@ -407,9 +407,11 @@ def image_prune(
 ) -> None:
     """Delete superseded images, keeping the live one and --keep rollbacks.
 
-    Removes both halves of each stale build -- the squashfs and the
-    kernel/initrd `ltsp ipxe` uses to generate the PXE boot menu -- so an
-    old build can no longer be accidentally netbooted. Reading the
+    Removes both halves of each stale build -- the squashfs `ltsp ipxe`
+    builds the boot menu from, and the kernel/initrd that entry would have
+    booted -- so an old build can no longer be netbooted, accidentally or
+    otherwise. A build missing either half is never kept as a rollback,
+    since there would be nothing bootable to roll back to. Reading the
     published-images directory needs root regardless of --debug (it's
     root-owned 0700, same as `image list`), so even a preview needs sudo.
     """

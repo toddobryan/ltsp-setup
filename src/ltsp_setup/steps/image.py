@@ -35,9 +35,13 @@ SOURCE_IMAGE_DIR = Path("/srv/ltsp")
 # IMAGE_DIR, not something this tool configures.
 PUBLISHED_IMAGE_DIR = Path("/srv/ltsp/images")
 
-# Where `ltsp image` extracts each build's kernel/initrd, and what `ltsp
-# ipxe` actually scans to generate the PXE boot menu -- LTSP's own default
-# TFTP_DIR/ltsp, not something this tool configures.
+# Where `ltsp image` extracts each build's kernel/initrd -- LTSP's own
+# default TFTP_DIR/ltsp, not something this tool configures. Note this is
+# NOT what generates the boot menu: `ltsp ipxe` builds its item list from
+# PUBLISHED_IMAGE_DIR (`list_img_names -i`, sorted ascending by name), and
+# each item then boots the kernel/initrd found here under the same name.
+# So a leftover directory here is invisible in the menu, while a leftover
+# squashfs over there is selectable -- see `prune_published_images`.
 TFTP_IMAGE_DIR = Path("/srv/tftp/ltsp")
 
 # How often to poll `virsh domstate` while waiting for a shutdown.
@@ -615,11 +619,12 @@ def prune_published_images(ctx: Context, *, keep: int = 1) -> list[str]:
     boot menu -- a student's client can netboot any of them, not just
     ``DEFAULT_IMAGE``, until this runs (Todd, 2026-08-27). Removes both
     halves of each stale build: the squashfs under ``PUBLISHED_IMAGE_DIR``
-    and the kernel/initrd under ``TFTP_IMAGE_DIR`` -- the latter is what
-    ``ltsp ipxe`` actually scans to generate the menu, so pruning only the
-    squashfs half would leave stale entries selectable. Works from the
-    union of both directories' names rather than just one, since a build
-    from before this tool existed may only have one half of the pair.
+    and the kernel/initrd under ``TFTP_IMAGE_DIR``. The squashfs half is
+    what removes the entry from the menu -- ``ltsp ipxe`` builds its item
+    list from ``PUBLISHED_IMAGE_DIR``, not from TFTP -- and the TFTP half
+    is the orphan that would otherwise be left behind. Works from the union
+    of both directories' names rather than just one, since a half-cleaned
+    or failed build may have only one of the pair.
 
     ``keep`` is how many *superseded* builds survive, newest first, on top
     of the live one, which is never a candidate for deletion. It defaults
@@ -629,6 +634,16 @@ def prune_published_images(ctx: Context, *, keep: int = 1) -> list[str]:
     ``image set-default <name>`` and a reboot rather than an hour-long
     rebuild (Todd, 2026-09-12). Pass ``keep=0`` for the old behaviour of
     leaving only the live image behind.
+
+    **Only a build with both halves can be kept as a rollback.** A name
+    with a squashfs but no kernel, or a kernel but no squashfs, is a failed
+    or half-cleaned build, and keeping it as "the rollback" would leave
+    nothing bootable to roll back *to* -- while deleting the working build
+    it outranked. This is not hypothetical: on 2026-09-15 the server had
+    exactly that, an orphaned ``2026-09-09`` tftp directory whose squashfs
+    was already gone, which sorts newer than the proven ``2026-08-28-2``
+    and would have been kept in its place. Incomplete builds are always
+    prune candidates, never keepers.
 
     Dated names sort chronologically, so "newest first" is just a reverse
     sort -- the same assumption ``dated_image_name`` already relies on.
@@ -649,9 +664,11 @@ def prune_published_images(ctx: Context, *, keep: int = 1) -> list[str]:
         )
     published = set(list_published_images(ctx))
     tftp_names = {p.name for p in ctx.runner.list_dirs(TFTP_IMAGE_DIR)}
-    superseded = sorted((published | tftp_names) - {live}, reverse=True)
-    stale = superseded[keep:]
-    for name in superseded[:keep]:
+    superseded = (published | tftp_names) - {live}
+    bootable = sorted(superseded & published & tftp_names, reverse=True)
+    keepers = bootable[:keep]
+    stale = sorted(superseded.difference(keepers), reverse=True)
+    for name in keepers:
         ctx.runner.announce(f"Keeping {name} as a rollback target")
 
     for name in stale:

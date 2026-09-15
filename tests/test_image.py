@@ -746,6 +746,49 @@ class TestPrunePublishedImages:
 
         assert image.prune_published_images(ctx, keep=5) == []
 
+    def test_a_half_build_is_never_kept_as_the_rollback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Found on the real server, 2026-09-15: an orphaned 2026-09-09 tftp
+        directory whose squashfs was already gone. It sorts newer than the
+        proven 2026-08-28-2, so keeping "the newest superseded build" would
+        have kept something unbootable and deleted the working fallback --
+        the exact failure the rollback exists to prevent.
+        """
+        ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-09-15")
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-09-15.img").write_text("x")
+        (image.TFTP_IMAGE_DIR / "mint-2026-09-15").mkdir()
+        # The proven fallback: both halves present.
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-28.img").write_text("x")
+        (image.TFTP_IMAGE_DIR / "mint-2026-08-28").mkdir()
+        # The orphan: a kernel with no squashfs behind it.
+        (image.TFTP_IMAGE_DIR / "mint-2026-09-09").mkdir()
+        monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+
+        pruned = image.prune_published_images(ctx, keep=1)
+
+        assert pruned == ["mint-2026-09-09"]
+        assert (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-28.img").exists()
+        assert (image.TFTP_IMAGE_DIR / "mint-2026-08-28").exists()
+        assert not (image.TFTP_IMAGE_DIR / "mint-2026-09-09").exists()
+
+    def test_a_squashfs_with_no_kernel_is_not_kept_either(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The mirror image of the case above: `ltsp ipxe` would offer this
+        one in the menu, but choosing it finds no kernel to boot.
+        """
+        ctx = _setup_prune(tmp_path, monkeypatch, live="mint-2026-09-15")
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-09-15.img").write_text("x")
+        (image.TFTP_IMAGE_DIR / "mint-2026-09-15").mkdir()
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-09-09.img").write_text("x")
+        (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-28.img").write_text("x")
+        (image.TFTP_IMAGE_DIR / "mint-2026-08-28").mkdir()
+        monkeypatch.setattr(ctx.runner, "run", lambda argv, **kw: None)
+
+        assert image.prune_published_images(ctx, keep=1) == ["mint-2026-09-09"]
+        assert (image.PUBLISHED_IMAGE_DIR / "mint-2026-08-28.img").exists()
+
     def test_negative_keep_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
