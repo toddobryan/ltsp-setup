@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -61,3 +63,29 @@ def test_configure_nat_unit_never_stacks_duplicate_rules(
     unit = _written(caplog, server.NAT_UNIT)
     assert "ExecStartPre=-/usr/sbin/iptables -t nat -D POSTROUTING" in unit
     assert "ExecStop=-/usr/sbin/iptables -t nat -D POSTROUTING" in unit
+
+
+def test_nfsd_threads_go_in_a_drop_in_not_the_package_conffile(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="ltsp-setup")
+    server.configure_nfsd_threads(Context(Settings(), Runner(dry_run=True)))
+
+    assert server.NFS_CONF_DROPIN.parent == Path("/etc/nfs.conf.d")
+    written = _written(caplog, server.NFS_CONF_DROPIN)
+    assert "[nfsd]\nthreads=64\n" in written
+
+
+def test_nfsd_threads_resize_the_running_server_without_a_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = Context(Settings(nfsd_threads=96), Runner(dry_run=True))
+    calls: list[list[str]] = []
+
+    def record(argv: Sequence[str], **kwargs: object) -> None:
+        calls.append(list(argv))
+
+    monkeypatch.setattr(ctx.runner, "run", record)
+    server.configure_nfsd_threads(ctx)
+
+    assert calls == [["rpc.nfsd", "96"]]

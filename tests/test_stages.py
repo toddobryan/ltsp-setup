@@ -32,6 +32,13 @@ def test_server_nat_comes_after_virt() -> None:
     assert names.index("nat") > names.index("virt")
 
 
+def test_server_nfsd_comes_after_ltsp_installs_the_nfs_server() -> None:
+    from ltsp_setup.plans import SERVER
+
+    names = [s.name for s in SERVER.stages]
+    assert names.index("nfsd") > names.index("ltsp")
+
+
 def test_stage_lookup_reports_valid_names() -> None:
     plan = Plan("server", [Stage("a", "", noop)])
     with pytest.raises(KeyError, match="a"):

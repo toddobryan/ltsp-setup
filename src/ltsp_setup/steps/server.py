@@ -19,6 +19,7 @@ ADMIN_BIN = Path("/usr/local/bin")
 
 SYSCTL_IP_FORWARD = Path("/etc/sysctl.d/60-ltsp-ip-forward.conf")
 NAT_UNIT = Path("/etc/systemd/system/ltsp-nat.service")
+NFS_CONF_DROPIN = Path("/etc/nfs.conf.d/ltsp-setup.conf")
 
 LTSP_PPA = "ppa:ltsp"
 
@@ -192,6 +193,26 @@ def configure_admin_shortcuts(ctx: Context) -> None:
 def configure_epoptes(ctx: Context) -> None:
     """Let the admin account use Epoptes without becoming root."""
     ctx.runner.run(["gpasswd", "-a", ctx.settings.admin_user, "epoptes"])
+
+
+def configure_nfsd_threads(ctx: Context) -> None:
+    """Give the NFS server enough threads for a whole class at once.
+
+    Written as a drop-in rather than by patching ``/etc/nfs.conf``, which is
+    a package conffile: ``/etc/nfs.conf.d/*.conf`` overrides it (``man 5
+    nfs.conf``), so upgrades never prompt about or quietly keep our edit.
+
+    ``rpc.nfsd <n>`` resizes the running server's thread pool in place.
+    Restarting ``nfs-server`` would pick the file up too, but freezes every
+    client's /home for a few seconds -- this doesn't, so the stage is safe to
+    run mid-class.
+    """
+    threads = ctx.settings.nfsd_threads
+    ctx.runner.write(
+        NFS_CONF_DROPIN,
+        templates.render("nfs-ltsp.conf", {"NFSD_THREADS": threads}),
+    )
+    ctx.runner.run(["rpc.nfsd", str(threads)])
 
 
 def configure_nat(ctx: Context) -> None:

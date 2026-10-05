@@ -324,6 +324,28 @@ stays disabled, as it is on production. Enabling it
 (`DEFAULT_FORWARD_POLICY="DROP"`) would also need a `ufw route allow` from
 the LTSP NIC to the internet NIC.
 
+### 64 NFS server threads, set without restarting NFS
+
+nfs-utils starts 8 `nfsd` threads. Production serves every thin client's
+`/home` *and* its root image over NFS (NFSv3 only -- zero v4 calls), so 8
+threads is shared by ~26 clients. Measured during a class-wide reboot on
+2026-10-05: the `/home` RAID1 (two WD Red Pro HDDs) at 92-96% busy with
+50-60ms reads, and `/proc/fs/nfsd/pool_stats` showing about 3% of requests
+arriving with no idle thread. Threads stuck waiting on `/home` also block
+image reads the page cache could answer immediately, which is the part more
+threads actually fixes. They don't make the disks faster -- SSDs for `/home`
+would.
+
+Todd's call: at least 64 (`Settings.nfsd_threads`). A thread costs roughly
+`max_block_size` (1MB) of memory, so 64 is about 64MB on a 16GB server.
+
+The `nfsd` stage writes `/etc/nfs.conf.d/ltsp-setup.conf` rather than
+editing `/etc/nfs.conf`, which is the package's conffile; the drop-in
+directory overrides it (`man 5 nfs.conf`). It then runs `rpc.nfsd <n>`,
+which resizes the live thread pool. Restarting `nfs-server` would also
+work, but freezes every client's `/home` for a few seconds; this doesn't,
+so the stage is safe to run mid-class.
+
 ### Building and testing the client image in the lab
 
 The lab's `ltsp-server` VM has a 40GB disk (`Lab.golden_disk_gb`) — nowhere

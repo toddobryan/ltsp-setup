@@ -25,6 +25,10 @@ def test_ltsp_subnet_is_the_network_not_the_address() -> None:
     assert net.ltsp_subnet == "10.0.0.0/16"
 
 
+def test_nfsd_threads_default_is_at_least_64() -> None:
+    assert config.Settings().nfsd_threads >= 64
+
+
 def test_toml_overrides_are_applied(tmp_path: Path) -> None:
     path = tmp_path / "ltsp-setup.toml"
     path.write_text(

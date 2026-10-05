@@ -40,6 +40,10 @@ def _server_ltsp(ctx: Context) -> None:
     server.configure_admin_shortcuts(ctx)
 
 
+def _server_nfsd(ctx: Context) -> None:
+    server.configure_nfsd_threads(ctx)
+
+
 def _server_virt(ctx: Context) -> None:
     server.install_virt_tools(ctx)
 
@@ -89,6 +93,13 @@ SERVER = Plan(
             "LTSP server, dnsmasq, NFS and Epoptes",
             _server_ltsp,
             reboot_after=True,
+        ),
+        # Its own stage, not part of `ltsp`, so production can take it with
+        # `server stage nfsd` -- the `ltsp` stage rewrites ltsp.conf whole.
+        Stage(
+            "nfsd",
+            "enough NFS server threads for a whole class logging in at once",
+            _server_nfsd,
         ),
         Stage(
             "virt",

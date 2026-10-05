@@ -337,6 +337,12 @@ class Settings:
     # contention.
     apt_lock_timeout_s: int = 600
 
+    # NFS server threads (/etc/nfs.conf.d/ltsp-setup.conf). The default of 8
+    # was saturating on 2026-10-05: with ~20 clients booting and logging in,
+    # about 3% of requests found no idle thread, while the /home disks sat at
+    # 92-96% busy. Threads are cheap (~1MB each); 64 is the floor Todd chose.
+    nfsd_threads: int = 64
+
     # MENU_TIMEOUT in ltsp.conf's [server] section: how long, in
     # milliseconds, `ltsp ipxe`'s generated boot menu waits before booting
     # DEFAULT_IMAGE. -1 is special -- it hides the menu entirely and boots
