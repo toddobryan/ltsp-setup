@@ -608,8 +608,13 @@ def current_menu_timeout(ctx: Context) -> int | None:
         ) from None
 
 
-def _write_server_setting(ctx: Context, key: str, value: object) -> None:
-    """Set one ``[server]`` key and regenerate the iPXE menu from it."""
+def set_server_setting(ctx: Context, key: str, value: object) -> None:
+    """Set one ``[server]`` key in ``ltsp.conf``, leaving the rest alone.
+
+    Safe against production's hand-written file, unlike
+    ``server.configure_ltsp`` -- see ``_with_server_setting``. Lives here
+    rather than in ``server.py`` only because this module imports that one.
+    """
     if not ctx.runner.dry_run and not LTSP_CONF.is_file():
         raise StepFailed(
             f"{LTSP_CONF} does not exist yet. Run the server's `ltsp` stage "
@@ -617,6 +622,11 @@ def _write_server_setting(ctx: Context, key: str, value: object) -> None:
         )
     current = ctx.runner.read_text(LTSP_CONF) if LTSP_CONF.is_file() else "[server]\n"
     ctx.runner.write(LTSP_CONF, _with_server_setting(current, key, value), mode=0o660)
+
+
+def _write_server_setting(ctx: Context, key: str, value: object) -> None:
+    """Set one ``[server]`` key and regenerate the iPXE menu from it."""
+    set_server_setting(ctx, key, value)
     ctx.runner.run(["ltsp", "ipxe"])
 
 

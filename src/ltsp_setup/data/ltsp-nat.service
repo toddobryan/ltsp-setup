@@ -1,0 +1,26 @@
+# Managed by ltsp-setup. Local edits will be overwritten.
+#
+# Thin clients reach everything beyond the server -- the internet, and the
+# school's DNS server, which dnsmasq hands them -- only through this NAT.
+#
+# LTSP's own ltsp.service would add this rule too, but it skips it whenever
+# IP forwarding is already on, taking that to mean NAT is already set up.
+# libvirt's autostarted `default` network turns forwarding on, and nothing
+# orders the two at boot, so whichever starts first decides whether clients
+# get internet. libvirt won on 2026-10-05. NAT=0 in ltsp.conf stops LTSP
+# trying, so this unit is the only thing that adds the rule.
+[Unit]
+Description=Masquerade LTSP client traffic from $LTSP_SUBNET
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Delete-then-add, so restarting this unit never stacks a duplicate rule.
+# The leading "-" lets the delete fail quietly when there is nothing to
+# delete, which is every boot.
+ExecStartPre=-/usr/sbin/iptables -t nat -D POSTROUTING -s $LTSP_SUBNET ! -d $LTSP_SUBNET -j MASQUERADE
+ExecStart=/usr/sbin/iptables -t nat -A POSTROUTING -s $LTSP_SUBNET ! -d $LTSP_SUBNET -j MASQUERADE
+ExecStop=-/usr/sbin/iptables -t nat -D POSTROUTING -s $LTSP_SUBNET ! -d $LTSP_SUBNET -j MASQUERADE
+
+[Install]
+WantedBy=multi-user.target

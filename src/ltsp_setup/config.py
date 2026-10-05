@@ -15,6 +15,7 @@ looked for at ``$LTSP_SETUP_CONFIG``, then ``./ltsp-setup.toml``, then
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass, replace
@@ -78,6 +79,11 @@ class Networking:
     @property
     def ltsp_cidr(self) -> str:
         return f"{self.ltsp_address}/{self.ltsp_prefix}"
+
+    @property
+    def ltsp_subnet(self) -> str:
+        """The thin clients' whole network, e.g. ``192.168.67.0/24``."""
+        return str(ipaddress.ip_interface(self.ltsp_cidr).network)
 
 
 @dataclass(frozen=True)

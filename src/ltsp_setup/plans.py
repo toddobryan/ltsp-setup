@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ltsp_setup.stages import Context, Plan, Stage
-from ltsp_setup.steps import apps, client, common, server, students
+from ltsp_setup.steps import apps, client, common, image, server, students
 
 
 def _server_networking(ctx: Context) -> None:
@@ -42,6 +42,14 @@ def _server_ltsp(ctx: Context) -> None:
 
 def _server_virt(ctx: Context) -> None:
     server.install_virt_tools(ctx)
+
+
+def _server_nat(ctx: Context) -> None:
+    server.configure_nat(ctx)
+    # Patched in place rather than through configure_ltsp's template, so
+    # this stage is safe to run on its own against production (`server
+    # stage nat`), whose ltsp.conf predates the template.
+    image.set_server_setting(ctx, "NAT", 0)
 
 
 def _client_ltsp(ctx: Context) -> None:
@@ -86,6 +94,12 @@ SERVER = Plan(
             "virt",
             "KVM and libvirt, to host the client-template VM",
             _server_virt,
+        ),
+        # After virt, whose libvirt network is what breaks LTSP's own NAT.
+        Stage(
+            "nat",
+            "IP forwarding and NAT so thin clients reach the internet",
+            _server_nat,
         ),
         Stage("desktop", "system-wide desktop defaults", _desktop, reboot_after=True),
         Stage(

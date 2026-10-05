@@ -24,6 +24,14 @@ def test_remaining_skips_completed_stages() -> None:
     assert [s.name for s in plan.remaining(state)] == ["b"]
 
 
+def test_server_nat_comes_after_virt() -> None:
+    """libvirt's network is what defeats LTSP's own NAT, so ours follows it."""
+    from ltsp_setup.plans import SERVER
+
+    names = [s.name for s in SERVER.stages]
+    assert names.index("nat") > names.index("virt")
+
+
 def test_stage_lookup_reports_valid_names() -> None:
     plan = Plan("server", [Stage("a", "", noop)])
     with pytest.raises(KeyError, match="a"):

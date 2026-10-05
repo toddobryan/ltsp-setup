@@ -245,6 +245,25 @@ def test_set_default_image_preserves_other_content(
     assert "NFS_HOME=1" in written
 
 
+def test_set_server_setting_disables_ltsp_nat_without_touching_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `nat` stage runs against production's hand-written ltsp.conf."""
+    conf = tmp_path / "ltsp.conf"
+    conf.write_text('[server]\nNFS_HOME=1\n[clients]\nFSTAB_HOME="x"\n')
+    monkeypatch.setattr(image, "LTSP_CONF", conf)
+    ctx = Context(Settings(), Runner(dry_run=False))
+    calls = _record_calls(ctx, monkeypatch)
+
+    image.set_server_setting(ctx, "NAT", 0)
+
+    assert conf.read_text() == (
+        '[server]\nNAT="0"\nNFS_HOME=1\n[clients]\nFSTAB_HOME="x"\n'
+    )
+    # NAT is read by ltsp.service at boot; the boot menu doesn't care.
+    assert calls == []
+
+
 def test_set_default_image_raises_when_conf_missing_for_real(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

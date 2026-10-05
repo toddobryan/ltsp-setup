@@ -17,6 +17,9 @@ NETPLAN_FILE = NETPLAN_DIR / "01-ltsp.yaml"
 
 ADMIN_BIN = Path("/usr/local/bin")
 
+SYSCTL_IP_FORWARD = Path("/etc/sysctl.d/60-ltsp-ip-forward.conf")
+NAT_UNIT = Path("/etc/systemd/system/ltsp-nat.service")
+
 LTSP_PPA = "ppa:ltsp"
 
 SERVER_PACKAGES = [
@@ -189,6 +192,43 @@ def configure_admin_shortcuts(ctx: Context) -> None:
 def configure_epoptes(ctx: Context) -> None:
     """Let the admin account use Epoptes without becoming root."""
     ctx.runner.run(["gpasswd", "-a", ctx.settings.admin_user, "epoptes"])
+
+
+def configure_nat(ctx: Context) -> None:
+    """Masquerade thin-client traffic out through the server, every boot.
+
+    LTSP's ``ltsp.service`` already tries to (``enable_nat`` in
+    ``/usr/share/ltsp/common/service/55-service.sh``), but returns early if
+    ``ip_forward`` is already 1 -- without checking for the MASQUERADE rule
+    it would have added. libvirt's ``default`` network, autostarted since
+    the ``virt`` stage, sets ``ip_forward`` too, and nothing orders the two.
+    On 2026-10-05 libvirt came up 74s before ``ltsp.service``, which logged
+    "IP forwarding was already enabled", and every thin client booted with
+    no internet -- not even DNS, since dnsmasq points them at the school's
+    server rather than answering itself.
+
+    So both halves are made explicit here: forwarding through ``sysctl.d``,
+    the rule through our own unit. ``plans._server_nat`` also sets ``NAT=0``
+    in ``ltsp.conf`` so LTSP doesn't add a second copy on boots it wins.
+
+    Assumes nothing filters forwarded traffic. True while ``ufw`` stays
+    disabled; enabling it (``DEFAULT_FORWARD_POLICY="DROP"``) would need a
+    ``ufw route allow`` for the LTSP NIC as well.
+    """
+    ctx.runner.write(SYSCTL_IP_FORWARD, templates.read("sysctl-ltsp-ip-forward.conf"))
+    ctx.runner.run(["sysctl", "-p", str(SYSCTL_IP_FORWARD)])
+    ctx.runner.write(
+        NAT_UNIT,
+        templates.render(
+            "ltsp-nat.service",
+            {"LTSP_SUBNET": ctx.settings.networking.ltsp_subnet},
+        ),
+    )
+    ctx.runner.run(["systemctl", "daemon-reload"])
+    ctx.runner.run(["systemctl", "enable", NAT_UNIT.name])
+    # restart, not start: re-running the stage after changing the subnet
+    # has to swap the live rule, and the unit stays active once it has run.
+    ctx.runner.run(["systemctl", "restart", NAT_UNIT.name])
 
 
 VIRT_PACKAGES = [

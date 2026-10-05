@@ -270,6 +270,60 @@ minutes at a time in the small hours — exactly when this runs. Without it
 the common failure would be a rebuild that failed for a reason having
 nothing to do with the image.
 
+### NAT is ours, not LTSP's
+
+On 2026-10-05, after a routine reboot of the production server, every thin
+client came up with no internet -- not even DNS, because dnsmasq runs with
+`port=0` and hands clients the school's DNS server, which they can only
+reach through the server's NAT. The `nat` table had no MASQUERADE rule for
+`192.168.67.0/24` at all.
+
+The cause is in LTSP itself. `enable_nat` in
+`/usr/share/ltsp/common/service/55-service.sh` does this:
+
+```sh
+read -r ipv4_forward </proc/sys/net/ipv4/ip_forward
+if [ "$ipv4_forward" = 1 ]; then
+    warn "IP forwarding was already enabled"
+    return 0
+fi
+```
+
+It takes forwarding being on as proof that NAT is already set up, and
+returns before adding its rule. libvirt's `default` network (autostarted
+since the `virt` stage installed libvirt) also switches forwarding on, and
+nothing orders `libvirtd` against `ltsp.service`. Whichever starts first
+decides whether clients get internet. That boot, libvirt's `virbr0` came up
+at 11:54:10 and `ltsp.service` started at 11:55:24 and logged exactly that
+warning. Earlier reboots had evidently gone the other way, which is why
+nothing had changed on the server to explain it.
+
+So the new `nat` stage (after `virt`, since libvirt is the trigger) takes
+both halves out of LTSP's hands:
+
+- `/etc/sysctl.d/60-ltsp-ip-forward.conf` sets `net.ipv4.ip_forward = 1`
+  explicitly, instead of leaving it to whichever service sets it first.
+- `ltsp-nat.service`, a oneshot unit, adds
+  `-s <subnet> ! -d <subnet> -j MASQUERADE`. It deletes before it adds, so
+  restarting it never stacks duplicates. No `-o <nic>`: production's
+  interface names haven't reliably matched the config (netplan's generated
+  files say `enp1s0f0` where the kernel says `eno1`), and `! -d` already
+  keeps client-to-client and client-to-server traffic unmasqueraded.
+- `NAT=0` in `ltsp.conf`'s `[server]` section turns LTSP's version off, so
+  on boots LTSP would have won there aren't two rules. It is patched in
+  place through `image.set_server_setting`, not `configure_ltsp`'s template,
+  so `ltsp-setup server stage nat` is safe to run on its own against
+  production (see the `configure_ltsp` caution above).
+
+Not `iptables-persistent`: it would also save libvirt's own chains, which
+libvirt recreates itself. Not `/etc/nftables.conf`: Mint's stock copy starts
+with `flush ruleset`, which would wipe libvirt's rules if it ran after them.
+
+This assumes nothing filters forwarded traffic. That holds while `ufw`
+stays disabled, as it is on production. Enabling it
+(`DEFAULT_FORWARD_POLICY="DROP"`) would also need a `ufw route allow` from
+the LTSP NIC to the internet NIC.
+
 ### Building and testing the client image in the lab
 
 The lab's `ltsp-server` VM has a 40GB disk (`Lab.golden_disk_gb`) — nowhere

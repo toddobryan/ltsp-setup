@@ -20,6 +20,11 @@ def test_ltsp_cidr_combines_address_and_prefix() -> None:
     assert net.ltsp_cidr == "10.0.0.1/16"
 
 
+def test_ltsp_subnet_is_the_network_not_the_address() -> None:
+    net = config.Networking(ltsp_address="10.0.5.1", ltsp_prefix=16)
+    assert net.ltsp_subnet == "10.0.0.0/16"
+
+
 def test_toml_overrides_are_applied(tmp_path: Path) -> None:
     path = tmp_path / "ltsp-setup.toml"
     path.write_text(
