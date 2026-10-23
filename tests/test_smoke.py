@@ -158,6 +158,7 @@ class TestWaitForAgent:
         with pytest.raises(StepFailed, match="never connected to epoptes"):
             smoke._wait_for_agent(
                 ctx,
+                "9c:7b:ef:b1:59:28",
                 {"192.168.67.107"},
                 {"192.168.67.107:37598", "192.168.67.107:50130"},
                 time.monotonic() + 0.01,
@@ -170,11 +171,29 @@ class TestWaitForAgent:
         _with_ss(ctx, monkeypatch, SS_OUTPUT)
         address = smoke._wait_for_agent(
             ctx,
+            "9c:7b:ef:b1:59:28",
             {"192.168.67.107"},
             {"192.168.67.107:37598"},
             time.monotonic() + 30,
         )
         assert address == "192.168.67.107"
+
+    def test_watches_the_kernels_later_lease_too(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The 2026-10-23 false failure: iPXE got .23, the booted kernel got
+        .24 sixteen seconds later, and epoptes connected from .24 -- an
+        address the test had never been told to watch."""
+        ctx = _ctx(tmp_path)
+        _with_ss(ctx, monkeypatch, "0  0  192.168.67.1:789  192.168.67.62:40000\n")
+        address = smoke._wait_for_agent(
+            ctx,
+            "b0:0c:d1:5d:e6:03",
+            {"192.168.67.61"},
+            set(),
+            time.monotonic() + 30,
+        )
+        assert address == "192.168.67.62"
 
 
 class TestWaitForLease:

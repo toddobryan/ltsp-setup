@@ -175,11 +175,18 @@ def _wait_for_lease(ctx: Context, mac: str, baseline: int, deadline: float) -> s
 
 
 def _wait_for_agent(
-    ctx: Context, addresses: set[str], ignore: set[str], deadline: float
+    ctx: Context, mac: str, addresses: set[str], ignore: set[str], deadline: float
 ) -> str:
-    """Wait for a *new* epoptes connection from one of ``addresses``."""
+    """Wait for a *new* epoptes connection from ``addresses`` or a later lease.
+
+    The lease file is re-read on every poll, not just once. iPXE's lease is
+    what ``_wait_for_lease`` sees first; the booted kernel asks for its own
+    a few seconds later, often gets a different address, and that later one
+    is the address epoptes connects from.
+    """
     st = ctx.settings.smoke_test
     while time.monotonic() < deadline:
+        addresses = addresses | {lease.address for lease in leases_for(ctx, mac)}
         new = agent_peers(ctx, addresses) - ignore
         if new:
             peer = sorted(new)[0]
@@ -246,7 +253,7 @@ def smoke_test_client(ctx: Context) -> str:
     try:
         deadline = time.monotonic() + st.boot_timeout_s
         addresses = _wait_for_lease(ctx, mac, baseline_expiry, deadline)
-        address = _wait_for_agent(ctx, addresses, stale_peers, deadline)
+        address = _wait_for_agent(ctx, mac, addresses, stale_peers, deadline)
     finally:
         _force_off(ctx, lv, st.vm_name)
     ctx.runner.announce(f"{st.vm_name} booted the live image and came up at {address}")
