@@ -220,7 +220,7 @@ looks backwards and isn't: `DEFAULT_IMAGE` is the only thing a netbooting
 client reads, so there is no way to test a build without pointing something
 at it. What makes it safe is that the previous value is captured before the
 switch and put straight back on failure, so a bad image is live only for the
-few minutes it takes one VM to fail to boot — on a Sunday, with nobody
+few minutes it takes one VM to fail to boot — on a Saturday, with nobody
 logged in. Pruning happens last and only on success, so the image being
 rolled back *to* still exists when it's needed.
 

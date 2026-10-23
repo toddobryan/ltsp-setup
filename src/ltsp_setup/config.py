@@ -260,9 +260,9 @@ class ImageRefresh:
     ``keep_rollback_images`` buys -- see steps/image.py::prune_published_images.
     """
 
-    # systemd OnCalendar= expression. Sunday small hours: nobody is logged
-    # in, and a failure has a whole day of slack before Monday morning.
-    on_calendar: str = "Sun *-*-* 02:00:00"
+    # systemd OnCalendar= expression. Saturday small hours: nobody is logged
+    # in, and a failure has the whole weekend of slack before Monday.
+    on_calendar: str = "Sat *-*-* 02:00:00"
     # Spread over half an hour so a rebuild never lands at exactly the same
     # instant as every other timer on the box.
     randomized_delay_s: int = 1800

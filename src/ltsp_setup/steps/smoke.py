@@ -3,7 +3,7 @@
 ``image build`` publishes a squashfs. Nothing about that says the thing
 boots. Up to now the check was Todd walking to a lab machine and turning it
 on, which is fine for a rebuild he started by hand and impossible for one
-that runs at two in the morning on a Sunday. This module is the automated
+that runs at two in the morning on a Saturday. This module is the automated
 stand-in: boot the diskless ``pxe-test-client`` VM, which is a thin client
 in every respect except that it lives on the server, and watch for evidence
 that it came all the way up.
