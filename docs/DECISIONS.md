@@ -213,7 +213,7 @@ available for quick rollback". Publishing unattended is a real change of
 policy: `refresh_image` deliberately stopped short of it, because a build
 that boots to a broken desktop shouldn't become the default without a human
 having looked at it. The gate wasn't dropped — it was replaced with
-something that can run at two in the morning.
+something that can run unattended.
 
 **`publish_image` sets `DEFAULT_IMAGE` first and tests afterwards.** That
 looks backwards and isn't: `DEFAULT_IMAGE` is the only thing a netbooting
@@ -266,7 +266,7 @@ Skipping a week costs nothing.
 **Every `apt-get` now waits for the dpkg lock.** `-o DPkg::Lock::Timeout=`
 (`Settings.apt_lock_timeout_s`, 600s). apt's default is to exit non-zero the
 instant it finds the lock held, and `unattended-upgrades` holds it for
-minutes at a time in the small hours — exactly when this runs. Without it
+minutes at a time, and nothing guarantees it is idle when this runs. Without it
 the common failure would be a rebuild that failed for a reason having
 nothing to do with the image.
 

@@ -21,7 +21,7 @@ tweaks (those go in `desktop-polish-todo.md`) and aren't design decisions
 - [ ] **Weekly unattended rebuild** (Todd, 2026-08-27, scoped 2026-09-12) —
       **implemented 2026-09-15, not yet run for real.** `ltsp-setup image
       schedule` installs a systemd timer that runs `image refresh --publish`
-      at `image_refresh.on_calendar` (Saturday 02:00 by default, with a
+      at `image_refresh.on_calendar` (Saturday 14:00 by default, with a
       30-minute randomised delay). Leave open until a weekend run has
       actually happened; see "What to check after the first weekend run"
       below.
@@ -30,7 +30,7 @@ tweaks (those go in `desktop-polish-todo.md`) and aren't design decisions
       but only behind a real test*: `publish_image` sets `DEFAULT_IMAGE`,
       netboots `pxe-test-client` against it, and puts the old image straight
       back if the client doesn't come up. The human gate didn't disappear —
-      it was replaced by something that can run at 2am. `image prune` now
+      it was replaced by something that can run unattended. `image prune` now
       also keeps one superseded build by default
       (`image_refresh.keep_rollback_images`), so reverting by hand is
       `image set-default <name>` and a reboot rather than an hour-long
@@ -88,7 +88,7 @@ that breaks:
 - [ ] **Run it by hand first**: `sudo ltsp-setup image smoke-test --no-debug`
       against the image that's already live. It should pass in a few
       minutes. That isolates the smoke test from the rebuild, so a failure
-      on Saturday morning is unambiguous.
+      on Saturday afternoon is unambiguous.
 
 ## Worth doing sometime
 

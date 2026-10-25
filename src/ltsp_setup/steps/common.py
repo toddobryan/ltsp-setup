@@ -66,7 +66,7 @@ def _apt(ctx: Context, *args: str) -> list[str]:
 
     Without ``DPkg::Lock::Timeout``, apt gives up the instant it finds the
     lock held and exits non-zero. ``unattended-upgrades`` holds it for
-    minutes at a time, in the small hours, which is exactly when the weekly
+    minutes at a time, and nothing guarantees it is idle when the weekly
     image rebuild runs -- so the default is a rebuild that fails for a
     reason that has nothing to do with the image. Waiting is the right
     answer; ``admin_user``-adjacent config carries how long (see

@@ -108,7 +108,7 @@ def test_install_all_skips_disabled_apps(caplog: pytest.LogCaptureFixture) -> No
 class TestAptLockTimeout:
     """Every apt-get this tool runs has to wait for the dpkg lock rather
     than fail on it. `unattended-upgrades` holds that lock for minutes at a
-    time in the small hours, which is exactly when the weekly image rebuild
+    time, and nothing guarantees it is idle when the weekly image rebuild
     runs -- without this, a rebuild fails for a reason that has nothing to
     do with the image (Todd, 2026-09-12).
     """
