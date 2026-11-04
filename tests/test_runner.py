@@ -426,3 +426,78 @@ def test_kind_nofollow_tells_a_real_file_from_everything_else(tmp_path: Path) ->
     assert kind(tmp_path, Path("dangling.py")) == "other"
     assert kind(tmp_path, Path("via/programs.py")) == "other"
     assert kind(tmp_path, Path("labs/programs.py/inside")) == "other"
+
+
+def test_write_nofollow_dry_run_writes_nothing(tmp_path: Path) -> None:
+    Runner(dry_run=True).write_nofollow(tmp_path, Path("made/note.txt"), "hello")
+
+    assert not (tmp_path / "made").exists()
+
+
+def test_write_nofollow_makes_folders_and_replaces_what_is_there(
+    tmp_path: Path,
+) -> None:
+    runner = Runner(dry_run=False)
+    target = tmp_path / "made" / "note.txt"
+
+    runner.write_nofollow(tmp_path, Path("made/note.txt"), "first")
+    runner.write_nofollow(tmp_path, Path("made/note.txt"), "second")
+
+    assert target.read_text() == "second"
+    assert target.stat().st_mode & 0o777 == 0o644
+
+
+def test_write_nofollow_does_not_write_through_a_symlink(tmp_path: Path) -> None:
+    victim = tmp_path / "victim"
+    victim.write_text("keep me")
+    (tmp_path / "note.txt").symlink_to(victim)
+
+    Runner(dry_run=False).write_nofollow(tmp_path, Path("note.txt"), "hello")
+
+    assert victim.read_text() == "keep me"
+    assert not (tmp_path / "note.txt").is_symlink()
+
+
+def test_write_nofollow_refuses_a_symlink_on_the_way(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "etc"
+    elsewhere.mkdir()
+    (tmp_path / "labs").symlink_to(elsewhere)
+
+    with pytest.raises(StepFailed):
+        Runner(dry_run=False).write_nofollow(tmp_path, Path("labs/note.txt"), "hello")
+
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_remove_nofollow_removes_a_file_and_ignores_a_missing_one(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "note.txt"
+    target.write_text("x")
+    runner = Runner(dry_run=False)
+
+    runner.remove_nofollow(tmp_path, Path("note.txt"))
+    runner.remove_nofollow(tmp_path, Path("note.txt"))
+
+    assert not target.exists()
+
+
+def test_remove_nofollow_dry_run_removes_nothing(tmp_path: Path) -> None:
+    target = tmp_path / "note.txt"
+    target.write_text("x")
+
+    Runner(dry_run=True).remove_nofollow(tmp_path, Path("note.txt"))
+
+    assert target.exists()
+
+
+def test_remove_nofollow_does_not_reach_through_a_symlink(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "etc"
+    elsewhere.mkdir()
+    victim = elsewhere / "note.txt"
+    victim.write_text("keep me")
+    (tmp_path / "labs").symlink_to(elsewhere)
+
+    Runner(dry_run=False).remove_nofollow(tmp_path, Path("labs/note.txt"))
+
+    assert victim.exists()

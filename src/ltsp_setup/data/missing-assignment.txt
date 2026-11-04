@@ -1,0 +1,1 @@
+The file $ASSIGNMENT_PATH was collected at $COLLECTED_AT, and was not found in your home folder. Check the spelling of the file (it must match exactly) and the location (it should be in your home folder). If you don't correct the problem, you will have a zero for this assignment.

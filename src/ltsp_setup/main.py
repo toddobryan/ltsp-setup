@@ -817,6 +817,9 @@ def collect(
     ~jsmith30/turned-in/labs/fall/programs.py, a folder they can read but not
     change. The original stays where it is.
 
+    A student without the file gets turned-in/labs/fall/missing-programs.py.txt
+    warning them of a zero, which goes away once the file is collected.
+
     Nothing is written over: a file that has changed since it was collected
     lands beside the first as jsmith30-2.py, and re-running is safe. Anything
     but a plain file, or anything reached through a symlink, is skipped.

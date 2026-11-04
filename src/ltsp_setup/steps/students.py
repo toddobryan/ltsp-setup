@@ -33,6 +33,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from ltsp_setup import templates
@@ -597,6 +598,16 @@ class CollectResult:
     skipped: list[tuple[str, str]] = field(default_factory=list)
 
 
+def _notice_path(ctx: Context, relative: Path) -> Path:
+    """Where a student's missing-file notice goes, relative to their home.
+
+    Next to where the turned-in copy would be, so two assignments with the
+    same name in different folders don't share a notice.
+    """
+    folder = ctx.settings.students.turned_in_dir / relative.parent
+    return folder / f"missing-{relative.name}.txt"
+
+
 def _checked_assignment_path(path: str) -> Path:
     """Validate a file to collect, given relative to each home directory.
 
@@ -703,6 +714,7 @@ def _collect_from(
         ctx.runner.copy_nofollow(
             filed[0].parent, Path(filed[0].name), home, receipt.relative_to(home)
         )
+    ctx.runner.remove_nofollow(home, _notice_path(ctx, relative))
 
 
 def collect_assignment(
@@ -720,6 +732,11 @@ def collect_assignment(
     everything in it, so students can read it and can't change what's in
     there. They can still rename the folder, since it sits in a directory
     they own; the copy that gets graded is out of their reach either way.
+
+    A student with no such file, who hasn't turned one in before, gets
+    ``turned-in/labs/fall/missing-programs.py.txt`` saying so and warning of
+    a zero. Each collection that still finds nothing updates its time, and
+    the one that finds the file removes it.
 
     **Nothing is ever written over.** A file that has changed since it was
     last collected may be a fix or may be a mistake, and that is the
@@ -750,6 +767,13 @@ def collect_assignment(
     selected = settings.collect_groups if groups is None else groups
     sections = _sections_by_student(ctx, selected)
     assignment_dir = _prepare_assignment_dirs(ctx, relative.stem, selected)
+    notice = templates.render(
+        "missing-assignment.txt",
+        {
+            "ASSIGNMENT_PATH": relative,
+            "COLLECTED_AT": datetime.now().strftime("%-I:%M %p on %A, %B %-d, %Y"),
+        },
+    )
 
     result = CollectResult()
     for username, student_groups in sorted(sections.items()):
@@ -783,11 +807,22 @@ def collect_assignment(
                     )
                 )
             else:
-                for group in student_groups:
-                    name = f"{username}{relative.suffix}"
-                    seen = ctx.runner.exists(assignment_dir / group / name)
-                    entry = f"{group}/{username}"
-                    (result.already_collected if seen else result.missing).append(entry)
+                name = f"{username}{relative.suffix}"
+                entries = [f"{group}/{username}" for group in student_groups]
+                if any(
+                    ctx.runner.exists(assignment_dir / group / name)
+                    for group in student_groups
+                ):
+                    result.already_collected.extend(entries)
+                else:
+                    # All the same text, so only the first is worth printing.
+                    ctx.runner.write_nofollow(
+                        home,
+                        _notice_path(ctx, relative),
+                        notice,
+                        show=not result.missing,
+                    )
+                    result.missing.extend(entries)
         except (StepFailed, OSError) as failure:
             result.skipped.append((username, str(failure)))
     # By section, which is how the teacher will read it.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -1524,3 +1525,125 @@ def test_collect_refuses_a_group_that_does_not_exist(
         students.collect_assignment(ctx, "image-exercises.rkt", groups=["r1", "r9"])
 
     assert not (ctx.settings.students.home_root / "sysadmin" / "assignments").exists()
+
+
+def _notice(ctx: Context, username: str, *parts: str) -> Path:
+    home = ctx.settings.students.home_root / username
+    return home.joinpath("turned-in", *parts)
+
+
+def test_collect_leaves_a_notice_for_a_student_without_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    _submit(ctx, "jsmith30")
+
+    students.collect_assignment(ctx, "image-exercises.rkt")
+
+    notice = _notice(ctx, "aadams27", "missing-image-exercises.rkt.txt")
+    assert notice.stat().st_mode & 0o777 == 0o644
+    assert re.fullmatch(
+        r"The file image-exercises\.rkt was collected at "
+        r"\d{1,2}:\d\d [AP]M on \w+, \w+ \d{1,2}, \d{4}, and was not found in "
+        r"your home folder\. Check the spelling of the file \(it must match "
+        r"exactly\) and the location \(it should be in your home folder\)\. If "
+        r"you don't correct the problem, you will have a zero for this "
+        r"assignment\.\n",
+        notice.read_text(),
+    )
+    assert not _notice(ctx, "jsmith30", "missing-image-exercises.rkt.txt").exists()
+
+
+def test_collect_puts_the_notice_where_the_file_would_have_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+
+    students.collect_assignment(ctx, "labs/fall/programs.py")
+
+    notice = _notice(ctx, "aadams27", "labs", "fall", "missing-programs.py.txt")
+    assert "The file labs/fall/programs.py was collected" in notice.read_text()
+
+
+def test_collect_replaces_the_notice_while_the_file_is_still_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    students.collect_assignment(ctx, "image-exercises.rkt")
+    notice = _notice(ctx, "aadams27", "missing-image-exercises.rkt.txt")
+    notice.write_text("from last time")
+
+    students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert notice.read_text().startswith("The file image-exercises.rkt")
+    assert sorted(p.name for p in notice.parent.iterdir()) == [notice.name]
+
+
+def test_collect_removes_the_notice_once_the_file_turns_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    students.collect_assignment(ctx, "image-exercises.rkt")
+    notice = _notice(ctx, "aadams27", "missing-image-exercises.rkt.txt")
+    assert notice.exists()
+    _submit(ctx, "aadams27", "late but here")
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert not notice.exists()
+    assert notice.with_name("image-exercises.rkt").read_text() == "late but here"
+    assert "r4/aadams27.rkt" in result.collected
+
+
+def test_collect_sends_no_notice_about_a_file_already_collected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    original = _submit(ctx, "jsmith30")
+    students.collect_assignment(ctx, "image-exercises.rkt")
+    original.unlink()
+
+    students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert not _notice(ctx, "jsmith30", "missing-image-exercises.rkt.txt").exists()
+
+
+def test_collect_sends_no_notice_to_a_skipped_student(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    home = ctx.settings.students.home_root / "jsmith30"
+    (home / "image-exercises.rkt").mkdir()
+
+    students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert not _notice(ctx, "jsmith30", "missing-image-exercises.rkt.txt").exists()
+
+
+def test_collect_dry_run_writes_no_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch, dry_run=True)
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert result.missing == ["r1/jsmith30", "r4/aadams27"]
+    assert not _notice(ctx, "aadams27").exists()
+
+
+def test_collect_notice_for_a_symlink_on_the_way_skips_the_student(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A planted turned-in/labs must not steer root's write anywhere."""
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    elsewhere = tmp_path / "etc"
+    elsewhere.mkdir()
+    turned_in = _notice(ctx, "aadams27")
+    turned_in.mkdir()
+    (turned_in / "labs").symlink_to(elsewhere)
+
+    result = students.collect_assignment(ctx, "labs/programs.py")
+
+    assert "aadams27" in [name for name, _ in result.skipped]
+    assert "r4/aadams27" not in result.missing
+    assert list(elsewhere.iterdir()) == []

@@ -73,6 +73,10 @@ to `~sysadmin/assignments/programs/r1/jsmith30.py` and to
 The original stays where it is. The command ends by listing who is missing, by
 section. Without `-g`, sections come from `students.collect_groups`.
 
+A student without the file gets `missing-programs.py.txt` in that same
+`turned-in` folder, warning of a zero. The notice goes away once the file is
+collected.
+
 Run it again whenever you like. A file that has changed since it was collected
 lands beside the first as `jsmith30-2.py` rather than replacing it.
 

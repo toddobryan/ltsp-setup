@@ -27,6 +27,10 @@ logger = logging.getLogger("ltsp-setup")
 
 console = Console(soft_wrap=True)
 
+# Creating a file in a folder a student may have tampered with: a name that
+# is already taken is an error, never something to write through.
+_CREATE_NEW = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+
 
 class StepFailed(RuntimeError):
     """A command that had to succeed did not."""
@@ -226,7 +230,6 @@ class Runner:
         logger.info("copy %s -> %s", src, dest)
         if self.dry_run:
             return
-        create = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
         try:
             src_dir = _open_dir_nofollow(src_root, src_rel.parent.parts)
             try:
@@ -246,7 +249,9 @@ class Runner:
                     dest_root, dest_rel.parent.parts, create=True
                 )
                 try:
-                    target_fd = os.open(dest_rel.name, create, mode, dir_fd=dest_dir)
+                    target_fd = os.open(
+                        dest_rel.name, _CREATE_NEW, mode, dir_fd=dest_dir
+                    )
                     try:
                         with os.fdopen(target_fd, "wb") as target:
                             shutil.copyfileobj(source, target)
@@ -258,6 +263,77 @@ class Runner:
                     os.close(dest_dir)
         except OSError as error:
             raise StepFailed(f"Couldn't copy {src} to {dest}: {error}") from error
+
+    def write_nofollow(
+        self,
+        root: Path,
+        rel: Path,
+        content: str,
+        *,
+        mode: int = 0o644,
+        show: bool = True,
+    ) -> None:
+        """Write text to ``root / rel``, replacing what's there.
+
+        :meth:`write` for a folder a student controls, with the same walk as
+        :meth:`copy_nofollow`: no symlink is followed on the way, and
+        missing folders are created, mode 755.
+
+        Args:
+            root: Where the walk starts. Not itself allowed to be a symlink.
+            rel: The file, relative to ``root``.
+            content: What to write.
+            mode: The file's mode.
+            show: Print the content as well as the path. Off for all but the
+                first of a run of identical files.
+
+        Raises:
+            StepFailed: A symlink on the way, or anything else that stops it.
+        """
+        path = root / rel
+        self._show("write", f"{path} [dim](mode {mode:o})[/dim]")
+        if show:
+            console.print(content.rstrip("\n"), markup=False)
+        logger.info("write %s", path)
+        if self.dry_run:
+            return
+        try:
+            dir_fd = _open_dir_nofollow(root, rel.parent.parts, create=True)
+            try:
+                try:
+                    os.unlink(rel.name, dir_fd=dir_fd)
+                except FileNotFoundError:
+                    pass
+                target_fd = os.open(rel.name, _CREATE_NEW, mode, dir_fd=dir_fd)
+                with os.fdopen(target_fd, "w") as target:
+                    target.write(content)
+                    os.fchmod(target.fileno(), mode)
+            finally:
+                os.close(dir_fd)
+        except OSError as error:
+            raise StepFailed(f"Couldn't write {path}: {error}") from error
+
+    def remove_nofollow(self, root: Path, rel: Path) -> None:
+        """Delete the plain file at ``root / rel``, if that's what is there.
+
+        :meth:`remove` for a folder a student controls: nothing is reached
+        through a symlink. Anything but a plain file is left alone.
+        """
+        if self.kind_nofollow(root, rel) != "file":
+            return
+        path = root / rel
+        self._show("remove", str(path))
+        logger.info("remove %s", path)
+        if self.dry_run:
+            return
+        try:
+            dir_fd = _open_dir_nofollow(root, rel.parent.parts)
+            try:
+                os.unlink(rel.name, dir_fd=dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError as error:
+            raise StepFailed(f"Couldn't remove {path}: {error}") from error
 
     def same_content(self, left: Path, right: Path) -> bool:
         """True if both paths exist and hold identical bytes.

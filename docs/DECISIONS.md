@@ -588,6 +588,16 @@ remove-stale`. It doesn't matter for grading: the folder is a receipt, and the
 copy that gets graded is out of their reach. If a student makes their own
 `turned-in`, they are skipped until it's removed by hand.
 
+**A student with nothing to collect gets a notice** (Todd, 2026-11-04):
+`turned-in/labs/fall/missing-programs.py.txt`, from
+`data/missing-assignment.txt`, warning of a zero. It sits where the turned-in
+copy would be, so the same filename in two folders gets two notices. A later
+collection that still finds nothing updates the time. One that finds the file
+removes the notice, because a warning of a zero beside the student's own
+turned-in work would be wrong. A student who deleted their file after it was
+collected gets none, and neither does one who is skipped: "not found" isn't
+what happened to them.
+
 **`assignments` is forced to 0700 on every run.** `/home` is mounted on every
 client, so a readable folder here would hand classmates each other's work.
 
