@@ -303,6 +303,20 @@ class Students:
     # handout is actually in front of them when they log in.
     push_dest: Path = field(default_factory=lambda: Path("Desktop"))
 
+    # The sections `collect` gathers assignments from unless told otherwise
+    # with --group, each getting its own folder under the assignment. Not
+    # everything in course_groups below: the rest aren't classes that hand
+    # in work this way.
+    collect_groups: tuple[str, ...] = ("r1", "r4", "w2", "w3", "w4")
+
+    # Where `collect` files submissions, relative to the admin account's home.
+    assignments_dir: Path = field(default_factory=lambda: Path("assignments"))
+
+    # The folder in each student's home that shows them what was collected.
+    # Must be a single name directly in the home directory, because
+    # Runner.ensure_readonly_dir only makes the one level.
+    turned_in_dir: Path = field(default_factory=lambda: Path("turned-in"))
+
     # Maps the first whitespace-delimited token of a roster CSV row's
     # "Course" field to a comma-joinable Unix group name (or names, for a
     # student enrolled in more than one mapped section) -- see

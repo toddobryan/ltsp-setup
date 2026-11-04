@@ -22,6 +22,10 @@ above it could in principle land on top of something a student made. That
 is why it never writes over a file that is already there, adding a
 numbered copy beside it instead unless explicitly told to overwrite --
 see that function's docstring.
+
+``collect_assignment`` is the fourth. It deletes nothing, but it runs as root
+inside folders students control, so it treats every name in there as
+hostile -- see that function's docstring.
 """
 
 from __future__ import annotations
@@ -428,16 +432,18 @@ def _suffixed(name: str, index: int) -> str:
     return f"{stem}-{index}{dot}{extension}" if dot else f"{name}-{index}"
 
 
-def _existing_copy(ctx: Context, src: Path, dest_dir: Path) -> Path | None:
-    """A copy of ``src`` already sitting in ``dest_dir``, under any of the
-    names a push would have used.
+def _existing_copy(
+    ctx: Context, src: Path, dest_dir: Path, name: str | None = None
+) -> Path | None:
+    """A copy of ``src`` already sitting in ``dest_dir``, under ``name``
+    (default: its own) or any of the numbered names derived from it.
 
     What makes re-running a push idempotent rather than a way to accumulate
     ``-2``, ``-3``, ``-4``: if this file was already delivered -- under its
     own name, or renamed out of the way of the student's version on an
     earlier run -- there is nothing left to do.
     """
-    for candidate in _candidate_names(src.name):
+    for candidate in _candidate_names(name or src.name):
         target = dest_dir / candidate
         if not ctx.runner.exists(target):
             return None
@@ -453,17 +459,20 @@ def _candidate_names(name: str) -> Iterator[str]:
         yield _suffixed(name, index)
 
 
-def _free_name(ctx: Context, src: Path, dest_dir: Path) -> Path:
-    """The first name in ``dest_dir`` that ``src`` can be written to without
-    displacing anything already there.
+def _free_name(
+    ctx: Context, src: Path, dest_dir: Path, name: str | None = None
+) -> Path:
+    """The first name in ``dest_dir``, starting from ``name`` (default: its
+    own), that ``src`` can be written to without displacing anything.
     """
-    for candidate in _candidate_names(src.name):
+    wanted = name or src.name
+    for candidate in _candidate_names(wanted):
         target = dest_dir / candidate
         if not ctx.runner.exists(target):
             return target
     raise StepFailed(
         f"{dest_dir} already holds {MAX_SUFFIXED_COPIES} copies of "
-        f"{src.name} -- look at that account before pushing again"
+        f"{wanted} -- look at that account before running this again"
     )
 
 
@@ -565,4 +574,224 @@ def push_files(
             entry = f"{username}: {target.name}"
             (result.replaced if replacing else result.pushed).append(entry)
 
+    return result
+
+
+# --------------------------------------------------------------- collecting
+
+
+@dataclass
+class CollectResult:
+    """What a collection did, one entry per student.
+
+    ``collected`` holds "<group>/<filename>" paths under the assignment's
+    folder, under the name each one actually landed as, so a resubmission
+    shows up as "r1/jsmith30-2.rkt". ``already_collected`` and ``missing``
+    are "<group>/<username>", the second being who to chase. ``skipped``
+    pairs a username with why, the same shape as :class:`PushResult`.
+    """
+
+    collected: list[str] = field(default_factory=list)
+    already_collected: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    skipped: list[tuple[str, str]] = field(default_factory=list)
+
+
+def _checked_assignment_path(path: str) -> Path:
+    """Validate a file to collect, given relative to each home directory.
+
+    Fail-closed for the same reason as ``_checked_dest``: this is joined onto
+    every student's home, and ``../sysadmin/notes`` would climb out of it.
+    Anything starting with a dot is refused along with ``..``, because
+    what's in there is settings and keys rather than assignments, and
+    ``.ssh/id_ed25519`` shouldn't be one typo away from a folder of them.
+    """
+    relative = Path(path)
+    if (
+        not relative.parts
+        or relative.is_absolute()
+        or any(part.startswith(".") for part in relative.parts)
+    ):
+        raise StepFailed(
+            f"Give a path inside each home directory, like image-exercises.rkt "
+            f"or labs/fall/programs.py: {path!r}"
+        )
+    return relative
+
+
+def _sections_by_student(ctx: Context, groups: Sequence[str]) -> dict[str, list[str]]:
+    """Each student in these sections, with which of them they're in.
+
+    Usually one, but ``course_groups`` allows more, and a student in two gets
+    a copy in both folders rather than vanishing from one section's list.
+    Every group is resolved here, before anything is touched, so a mistyped
+    section fails with nothing half-collected.
+    """
+    sections: dict[str, list[str]] = {}
+    for group in groups:
+        for username in _recipients(ctx, group)[0]:
+            sections.setdefault(username, []).append(group)
+    return sections
+
+
+def _prepare_assignment_dirs(
+    ctx: Context, assignment: str, groups: Sequence[str]
+) -> Path:
+    """Create the assignment's folder tree and return the assignment's folder.
+
+    The top ``assignments`` folder is forced to 0700 on every run, whatever
+    it was before: ``/home`` is NFS-mounted on every client, so if this
+    folder were readable, every submission would be there for classmates to
+    copy. The folders under it need no mode of their own for that reason.
+    """
+    admin = ctx.settings.admin_user
+    admin_home = _home_dir(ctx, admin)
+    if not ctx.runner.exists(admin_home):
+        raise StepFailed(f"No home directory for {admin} at {admin_home}")
+    admin_group = ctx.runner.primary_group(admin)
+
+    root = admin_home / ctx.settings.students.assignments_dir
+    assignment_dir = root / assignment
+    group_dirs = [assignment_dir / group for group in groups]
+    for directory in [root, assignment_dir, *group_dirs]:
+        if not ctx.runner.exists(directory):
+            ctx.runner.mkdir(directory, mode=0o700)
+            ctx.runner.chown(directory, admin, admin_group)
+    ctx.runner.run(["chmod", "700", str(root)])
+    return assignment_dir
+
+
+def _collect_from(
+    ctx: Context,
+    home: Path,
+    relative: Path,
+    username: str,
+    groups: Sequence[str],
+    assignment_dir: Path,
+    result: CollectResult,
+) -> None:
+    """File one student's submission and give them a copy in ``turned-in``.
+
+    A failure part way leaves nothing to clean up: re-running recognises
+    the copies already made by their content rather than making them twice.
+    """
+    admin = ctx.settings.admin_user
+    admin_group = ctx.runner.primary_group(admin)
+    src = home / relative
+    filed: list[Path] = []
+    for group in groups:
+        dest_dir = assignment_dir / group
+        name = f"{username}{relative.suffix}"
+        target = _existing_copy(ctx, src, dest_dir, name)
+        if target is not None:
+            result.already_collected.append(f"{group}/{username}")
+        else:
+            target = _free_name(ctx, src, dest_dir, name)
+            ctx.runner.copy_nofollow(
+                home, relative, target.parent, Path(target.name), mode=0o600
+            )
+            ctx.runner.chown(target, admin, admin_group)
+            result.collected.append(f"{group}/{target.name}")
+        filed.append(target)
+
+    receipt_dir = home / ctx.settings.students.turned_in_dir / relative.parent
+    if _existing_copy(ctx, src, receipt_dir) is None:
+        # From our own copy rather than src, so that what the student sees
+        # as turned in is what was actually collected, even if they saved
+        # again in the last few milliseconds.
+        receipt = _free_name(ctx, src, receipt_dir)
+        ctx.runner.copy_nofollow(
+            filed[0].parent, Path(filed[0].name), home, receipt.relative_to(home)
+        )
+
+
+def collect_assignment(
+    ctx: Context, path: str, *, groups: Sequence[str] | None = None
+) -> CollectResult:
+    """Gather one file from every student into the admin account's home.
+
+    ``labs/fall/programs.py`` in the home of jsmith30, who is in r1, is
+    copied to ``~sysadmin/assignments/programs/r1/jsmith30.py``, owned by
+    the admin account, and to ``~jsmith30/turned-in/labs/fall/programs.py``.
+    The original stays where it is, so this never deletes anything.
+
+    ``turned-in`` is created for every student in the sections collected,
+    whether or not they've turned anything in. Root owns that folder and
+    everything in it, so students can read it and can't change what's in
+    there. They can still rename the folder, since it sits in a directory
+    they own; the copy that gets graded is out of their reach either way.
+
+    **Nothing is ever written over.** A file that has changed since it was
+    last collected may be a fix or may be a mistake, and that is the
+    teacher's call. So the new version lands beside the old one as
+    ``jsmith30-2.py`` (and ``programs-2.py`` in ``turned-in``). An
+    unchanged file adds nothing, so re-running is safe.
+
+    **Everything in a student's home is treated as hostile**, since this
+    runs as root in a folder they control. A file that isn't plain, or is
+    reached through a symlink, is skipped: following one could read
+    something they can't, or a classmate's work, and file it under their
+    name. So is a student whose ``turned-in`` is anything other than the
+    folder this made, because writing into it could land anywhere. One
+    student's trouble never stops the rest of the class.
+
+    Args:
+        ctx: Settings and runner.
+        path: The file, relative to each home directory.
+        groups: Sections to collect from, or ``students.collect_groups``
+            when None.
+
+    Returns:
+        A :class:`CollectResult` accounting for every student in the
+        collected sections.
+    """
+    relative = _checked_assignment_path(path)
+    settings = ctx.settings.students
+    selected = settings.collect_groups if groups is None else groups
+    sections = _sections_by_student(ctx, selected)
+    assignment_dir = _prepare_assignment_dirs(ctx, relative.stem, selected)
+
+    result = CollectResult()
+    for username, student_groups in sorted(sections.items()):
+        home = _home_dir(ctx, username)
+        if not ctx.runner.exists(home):
+            result.skipped.append((username, f"no home directory at {home}"))
+            continue
+
+        turned_in = home / settings.turned_in_dir
+        try:
+            kind = ctx.runner.kind_nofollow(home, relative)
+            if not ctx.runner.ensure_readonly_dir(turned_in):
+                result.skipped.append(
+                    (username, f"{turned_in} isn't the folder this tool made")
+                )
+            elif kind == "file":
+                _collect_from(
+                    ctx,
+                    home,
+                    relative,
+                    username,
+                    student_groups,
+                    assignment_dir,
+                    result,
+                )
+            elif kind == "other":
+                result.skipped.append(
+                    (
+                        username,
+                        f"{home / relative} isn't a plain file in a real folder",
+                    )
+                )
+            else:
+                for group in student_groups:
+                    name = f"{username}{relative.suffix}"
+                    seen = ctx.runner.exists(assignment_dir / group / name)
+                    entry = f"{group}/{username}"
+                    (result.already_collected if seen else result.missing).append(entry)
+        except (StepFailed, OSError) as failure:
+            result.skipped.append((username, str(failure)))
+    # By section, which is how the teacher will read it.
+    result.collected.sort()
+    result.already_collected.sort()
+    result.missing.sort()
     return result

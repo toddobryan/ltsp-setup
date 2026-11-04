@@ -1019,3 +1019,508 @@ def test_push_files_refuses_a_destination_that_escapes_the_home_directory(
 
     with pytest.raises(StepFailed, match=r"can't start with '/'"):
         students.push_files(ctx, sources, dest=Path("/etc/skel"))
+
+
+# --------------------------------------------------------------- collecting
+
+_CLASS = {
+    "r1": ["jsmith30"],
+    "r4": ["aadams27"],
+    "w2": [],
+    "w3": [],
+    "w4": [],
+}
+
+
+def _collect_ctx(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    dry_run: bool = False,
+    group_members: dict[str, list[str]] | None = None,
+) -> tuple[Context, list[tuple[Path, str, str]]]:
+    """A class of two with real home directories, plus the admin's."""
+    members = _CLASS if group_members is None else group_members
+    names = sorted({name for group in members.values() for name in group})
+    ctx, chowns = _push_ctx(
+        tmp_path,
+        monkeypatch,
+        dry_run=dry_run,
+        accounts=[(name, 1003 + i) for i, name in enumerate(names)],
+        group_members=members,
+    )
+    for name in {ctx.settings.admin_user, *names}:
+        _make_home(ctx, name)
+    return ctx, chowns
+
+
+def _submit(ctx: Context, username: str, text: str = "(define x 1)") -> Path:
+    path = ctx.settings.students.home_root / username / "image-exercises.rkt"
+    path.write_text(text)
+    return path
+
+
+def _filed(ctx: Context, *parts: str) -> Path:
+    return ctx.settings.students.home_root.joinpath(
+        "sysadmin", "assignments", "image-exercises", *parts
+    )
+
+
+def test_collect_files_by_section_and_username_and_leaves_the_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    original = _submit(ctx, "jsmith30", "mine")
+    _submit(ctx, "aadams27", "theirs")
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert _filed(ctx, "r1", "jsmith30.rkt").read_text() == "mine"
+    assert _filed(ctx, "r4", "aadams27.rkt").read_text() == "theirs"
+    assert original.read_text() == "mine"
+    receipt = original.parent / "turned-in" / "image-exercises.rkt"
+    assert receipt.read_text() == "mine"
+    assert sorted(result.collected) == ["r1/jsmith30.rkt", "r4/aadams27.rkt"]
+    assert result.missing == [] and result.skipped == []
+
+
+def test_collect_makes_a_folder_for_every_section_even_an_empty_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+
+    students.collect_assignment(ctx, "image-exercises.rkt")
+
+    for group in ("r1", "r4", "w2", "w3", "w4"):
+        assert _filed(ctx, group).is_dir()
+
+
+def test_collect_gives_every_student_a_readable_unwritable_turned_in_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Including one with nothing to hand in yet. Owned by whoever runs this
+    (root, for real), so what the student is left with is the "other" bits.
+    """
+    ctx, chowns = _collect_ctx(tmp_path, monkeypatch)
+    original = _submit(ctx, "jsmith30")
+
+    students.collect_assignment(ctx, "image-exercises.rkt")
+
+    for name in ("jsmith30", "aadams27"):
+        folder = ctx.settings.students.home_root / name / "turned-in"
+        assert folder.stat().st_mode & 0o777 == 0o755
+        assert folder not in [path for path, _, _ in chowns]
+    receipt = original.parent / "turned-in" / "image-exercises.rkt"
+    assert receipt.stat().st_mode & 0o777 == 0o644
+    assert receipt not in [path for path, _, _ in chowns]
+
+
+def test_collect_keeps_submissions_away_from_classmates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """/home is on every client, so a readable folder here is a cheat sheet."""
+    ctx, chowns = _collect_ctx(tmp_path, monkeypatch)
+    root = ctx.settings.students.home_root / "sysadmin" / "assignments"
+    root.mkdir(mode=0o755)
+    root.chmod(0o755)
+    _submit(ctx, "jsmith30")
+
+    students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert root.stat().st_mode & 0o777 == 0o700
+    filed = _filed(ctx, "r1", "jsmith30.rkt")
+    assert filed.stat().st_mode & 0o777 == 0o600
+    assert (filed, "sysadmin", "sysadmin") in chowns
+    assert (_filed(ctx, "r1"), "sysadmin", "sysadmin") in chowns
+
+
+def test_collect_reports_who_has_not_turned_anything_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    _submit(ctx, "jsmith30")
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert result.missing == ["r4/aadams27"]
+
+
+def test_collect_again_tells_collected_apart_from_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    original = _submit(ctx, "jsmith30")
+    students.collect_assignment(ctx, "image-exercises.rkt")
+    original.unlink()
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert result.collected == []
+    assert result.already_collected == ["r1/jsmith30"]
+    assert result.missing == ["r4/aadams27"]
+
+
+def test_collect_keeps_both_versions_of_a_resubmission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    original = _submit(ctx, "jsmith30", "first")
+    students.collect_assignment(ctx, "image-exercises.rkt")
+    _submit(ctx, "jsmith30", "second")
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert result.collected == ["r1/jsmith30-2.rkt"]
+    assert _filed(ctx, "r1", "jsmith30.rkt").read_text() == "first"
+    assert _filed(ctx, "r1", "jsmith30-2.rkt").read_text() == "second"
+    turned_in = original.parent / "turned-in"
+    assert (turned_in / "image-exercises.rkt").read_text() == "first"
+    assert (turned_in / "image-exercises-2.rkt").read_text() == "second"
+
+
+def test_collect_of_an_unchanged_file_adds_no_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    original = _submit(ctx, "jsmith30", "same")
+    students.collect_assignment(ctx, "image-exercises.rkt")
+    _submit(ctx, "jsmith30", "same")
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert result.collected == []
+    assert "r1/jsmith30" in result.already_collected
+    assert not _filed(ctx, "r1", "jsmith30-2.rkt").exists()
+    assert not (original.parent / "turned-in" / "image-exercises-2.rkt").exists()
+
+
+def test_collect_files_a_student_in_two_sections_in_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(
+        tmp_path,
+        monkeypatch,
+        group_members={**_CLASS, "w2": ["jsmith30"]},
+    )
+    original = _submit(ctx, "jsmith30", "mine")
+
+    students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert _filed(ctx, "r1", "jsmith30.rkt").read_text() == "mine"
+    assert _filed(ctx, "w2", "jsmith30.rkt").read_text() == "mine"
+    assert len(list((original.parent / "turned-in").iterdir())) == 1
+
+
+def test_collect_leaves_staff_in_a_section_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(
+        tmp_path,
+        monkeypatch,
+        group_members={**_CLASS, "r1": ["jsmith30", "sysadmin"]},
+    )
+    admin_home = ctx.settings.students.home_root / "sysadmin"
+    (admin_home / "image-exercises.rkt").write_text("answer key")
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert (admin_home / "image-exercises.rkt").read_text() == "answer key"
+    assert not (admin_home / "turned-in").exists()
+    assert result.missing == ["r1/jsmith30", "r4/aadams27"]
+
+
+def test_collect_dry_run_changes_nothing_but_reports_the_same(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch, dry_run=True)
+    original = _submit(ctx, "jsmith30")
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert result.collected == ["r1/jsmith30.rkt"]
+    assert result.missing == ["r4/aadams27"]
+    assert original.exists()
+    assert not (original.parent / "turned-in").exists()
+    assert not (ctx.settings.students.home_root / "sysadmin" / "assignments").exists()
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["", ".", ".bashrc", ".ssh/id_ed25519", "labs/../../sysadmin/x", "/etc/shadow"],
+)
+def test_collect_refuses_a_path_that_leaves_the_home_or_is_hidden(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+
+    with pytest.raises(StepFailed, match="Give a path inside"):
+        students.collect_assignment(ctx, filename)
+
+    assert not (ctx.settings.students.home_root / "sysadmin" / "assignments").exists()
+
+
+def test_collect_touches_nothing_when_a_section_does_not_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    members = {name: group for name, group in _CLASS.items() if name != "w4"}
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch, group_members=members)
+    original = _submit(ctx, "jsmith30")
+
+    with pytest.raises(StepFailed, match="No such group: w4"):
+        students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert original.exists()
+    assert not (ctx.settings.students.home_root / "sysadmin" / "assignments").exists()
+
+
+def test_collect_fails_without_the_admin_home_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    (ctx.settings.students.home_root / "sysadmin").rmdir()
+
+    with pytest.raises(StepFailed, match="No home directory for sysadmin"):
+        students.collect_assignment(ctx, "image-exercises.rkt")
+
+
+def test_collect_will_not_read_through_a_symlink_a_student_planted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Root following this would put /etc/shadow in a folder they can read."""
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    secret = tmp_path / "shadow"
+    secret.write_text("root:hash")
+    planted = ctx.settings.students.home_root / "jsmith30" / "image-exercises.rkt"
+    planted.symlink_to(secret)
+    _submit(ctx, "aadams27", "honest work")
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert [name for name, _ in result.skipped] == ["jsmith30"]
+    assert planted.is_symlink()
+    assert not _filed(ctx, "r1", "jsmith30.rkt").exists()
+    assert list((planted.parent / "turned-in").iterdir()) == []
+    assert _filed(ctx, "r4", "aadams27.rkt").read_text() == "honest work"
+
+
+def test_collect_will_not_write_through_a_symlinked_turned_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Root following this would drop a file anywhere the student points it."""
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    elsewhere = tmp_path / "etc"
+    elsewhere.mkdir()
+    original = _submit(ctx, "jsmith30")
+    (original.parent / "turned-in").symlink_to(elsewhere)
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert [name for name, _ in result.skipped] == ["jsmith30"]
+    assert list(elsewhere.iterdir()) == []
+    assert original.exists()
+    assert not _filed(ctx, "r1", "jsmith30.rkt").exists()
+
+
+def test_collect_skips_a_turned_in_folder_the_student_made_themselves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    original = _submit(ctx, "jsmith30")
+    theirs = original.parent / "turned-in"
+    theirs.mkdir()
+    monkeypatch.setattr("os.geteuid", lambda: theirs.stat().st_uid + 1)
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert "isn't the folder this tool made" in result.skipped[0][1]
+    assert original.exists()
+
+
+def test_collect_skips_a_directory_with_the_assignment_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    folder = ctx.settings.students.home_root / "jsmith30" / "image-exercises.rkt"
+    folder.mkdir()
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert result.skipped == [
+        ("jsmith30", f"{folder} isn't a plain file in a real folder")
+    ]
+    assert folder.is_dir()
+
+
+def test_collect_carries_on_with_the_class_if_one_copy_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    _submit(ctx, "jsmith30")
+    _submit(ctx, "aadams27", "theirs")
+    real_copy = ctx.runner.copy_nofollow
+
+    def fail_for_jsmith(
+        src_root: Path,
+        src_rel: Path,
+        dest_root: Path,
+        dest_rel: Path,
+        *,
+        mode: int = 0o644,
+    ) -> None:
+        if "jsmith30" in str(src_root):
+            raise StepFailed("disk full")
+        real_copy(src_root, src_rel, dest_root, dest_rel, mode=mode)
+
+    monkeypatch.setattr(ctx.runner, "copy_nofollow", fail_for_jsmith)
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert result.skipped == [("jsmith30", "disk full")]
+    assert _filed(ctx, "r4", "aadams27.rkt").read_text() == "theirs"
+
+
+def test_collect_finishes_the_job_after_a_failure_between_the_two_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    original = _submit(ctx, "jsmith30", "mine")
+    real_copy = ctx.runner.copy_nofollow
+
+    def fail_on_the_receipt(
+        src_root: Path,
+        src_rel: Path,
+        dest_root: Path,
+        dest_rel: Path,
+        *,
+        mode: int = 0o644,
+    ) -> None:
+        if "turned-in" in str(dest_rel):
+            raise StepFailed("disk full")
+        real_copy(src_root, src_rel, dest_root, dest_rel, mode=mode)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ctx.runner, "copy_nofollow", fail_on_the_receipt)
+        students.collect_assignment(ctx, "image-exercises.rkt")
+    assert not (original.parent / "turned-in" / "image-exercises.rkt").exists()
+
+    students.collect_assignment(ctx, "image-exercises.rkt")
+
+    assert not _filed(ctx, "r1", "jsmith30-2.rkt").exists()
+    assert (original.parent / "turned-in" / "image-exercises.rkt").read_text() == "mine"
+
+
+def _submit_at(ctx: Context, username: str, rel: str, text: str) -> Path:
+    path = ctx.settings.students.home_root / username / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def test_collect_from_a_path_files_by_name_and_mirrors_it_in_turned_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    original = _submit_at(ctx, "jsmith30", "labs/fall/programs.py", "print(1)")
+
+    result = students.collect_assignment(ctx, "labs/fall/programs.py")
+
+    home_root = ctx.settings.students.home_root
+    filed = home_root / "sysadmin/assignments/programs/r1/jsmith30.py"
+    assert filed.read_text() == "print(1)"
+    receipt = home_root / "jsmith30/turned-in/labs/fall/programs.py"
+    assert receipt.read_text() == "print(1)"
+    assert original.read_text() == "print(1)"
+    assert result.collected == ["r1/jsmith30.py"]
+    assert result.missing == ["r4/aadams27"]
+
+
+def test_collect_numbers_a_changed_file_inside_the_mirrored_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    _submit_at(ctx, "jsmith30", "labs/programs.py", "first")
+    students.collect_assignment(ctx, "labs/programs.py")
+    _submit_at(ctx, "jsmith30", "labs/programs.py", "second")
+
+    result = students.collect_assignment(ctx, "labs/programs.py")
+
+    assert result.collected == ["r1/jsmith30-2.py"]
+    receipts = ctx.settings.students.home_root / "jsmith30/turned-in/labs"
+    assert (receipts / "programs.py").read_text() == "first"
+    assert (receipts / "programs-2.py").read_text() == "second"
+
+
+def test_collect_will_not_walk_through_a_symlink_into_a_classmates_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Root following this files one student's work under another's name."""
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    theirs = _submit_at(ctx, "aadams27", "labs/programs.py", "aadams's work")
+    home = ctx.settings.students.home_root / "jsmith30"
+    (home / "labs").symlink_to(theirs.parent)
+
+    result = students.collect_assignment(ctx, "labs/programs.py")
+
+    assert [name for name, _ in result.skipped] == ["jsmith30"]
+    assert result.collected == ["r4/aadams27.py"]
+    assignment = ctx.settings.students.home_root / "sysadmin/assignments/programs"
+    assert list((assignment / "r1").iterdir()) == []
+    assert list((home / "turned-in").iterdir()) == []
+
+
+def test_collect_will_not_write_through_a_symlink_inside_turned_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    elsewhere = tmp_path / "etc"
+    elsewhere.mkdir()
+    _submit_at(ctx, "jsmith30", "labs/programs.py", "print(1)")
+    turned_in = ctx.settings.students.home_root / "jsmith30/turned-in"
+    turned_in.mkdir()
+    (turned_in / "labs").symlink_to(elsewhere)
+
+    result = students.collect_assignment(ctx, "labs/programs.py")
+
+    assert [name for name, _ in result.skipped] == ["jsmith30"]
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_collect_with_groups_touches_only_those_sections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    _submit(ctx, "jsmith30", "mine")
+    other = _submit(ctx, "aadams27", "theirs")
+
+    result = students.collect_assignment(ctx, "image-exercises.rkt", groups=["r1"])
+
+    assert result.collected == ["r1/jsmith30.rkt"]
+    assert result.missing == []
+    assert _filed(ctx, "r1").is_dir()
+    assert not _filed(ctx, "r4").exists()
+    assert not (other.parent / "turned-in").exists()
+
+
+def test_collect_with_several_groups_covers_each_of_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+    _submit(ctx, "jsmith30")
+    _submit(ctx, "aadams27")
+
+    result = students.collect_assignment(
+        ctx, "image-exercises.rkt", groups=["r1", "r4"]
+    )
+
+    assert result.collected == ["r1/jsmith30.rkt", "r4/aadams27.rkt"]
+
+
+def test_collect_refuses_a_group_that_does_not_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _ = _collect_ctx(tmp_path, monkeypatch)
+
+    with pytest.raises(StepFailed, match="No such group: r9"):
+        students.collect_assignment(ctx, "image-exercises.rkt", groups=["r1", "r9"])
+
+    assert not (ctx.settings.students.home_root / "sysadmin" / "assignments").exists()

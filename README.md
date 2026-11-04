@@ -59,6 +59,23 @@ test VM and the real server and can move when a card is reseated. Set
 rename the interface to whatever `nic_for_internet` / `nic_for_ltsp` say. The
 lab assigns fixed MACs to the server VM for exactly this reason.
 
+## Collecting assignments
+
+```bash
+sudo ltsp-setup collect image-exercises.rkt                  # shows who has it
+sudo ltsp-setup collect image-exercises.rkt --no-debug       # collects it
+sudo ltsp-setup collect labs/fall/programs.py -g r1 -g r4 --no-debug
+```
+
+For jsmith30 in section r1, the last one copies `~jsmith30/labs/fall/programs.py`
+to `~sysadmin/assignments/programs/r1/jsmith30.py` and to
+`~jsmith30/turned-in/labs/fall/programs.py`, which they can read but not change.
+The original stays where it is. The command ends by listing who is missing, by
+section. Without `-g`, sections come from `students.collect_groups`.
+
+Run it again whenever you like. A file that has changed since it was collected
+lands beside the first as `jsmith30-2.py` rather than replacing it.
+
 ## The test lab
 
 The Mint ISO is a live image driven by Ubiquity, which does not preseed

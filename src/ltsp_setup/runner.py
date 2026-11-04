@@ -14,9 +14,11 @@ import os
 import pwd
 import shlex
 import shutil
+import stat
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Literal
 
 from rich.console import Console
 from rich.syntax import Syntax
@@ -184,6 +186,79 @@ class Runner:
         shutil.copyfile(src, dest)
         dest.chmod(mode)
 
+    def copy_nofollow(
+        self,
+        src_root: Path,
+        src_rel: Path,
+        dest_root: Path,
+        dest_rel: Path,
+        *,
+        mode: int = 0o644,
+    ) -> None:
+        """Copy a file when a student controls the folders at either end.
+
+        :meth:`copy` follows symlinks, which is fine for a teacher's own
+        handouts and dangerous for root working inside a student's home: a
+        submission that is really a symlink to ``/etc/shadow`` would be
+        copied somewhere the student can read it, a folder on the way to it
+        could lead into a classmate's home, and a destination folder swapped
+        for a symlink would have root writing anywhere on the disk. Checking
+        first doesn't help, because the student can swap the path after the
+        check. So the kernel refuses instead: each relative path is walked
+        one folder at a time, no symlink is followed anywhere along it, and
+        an existing destination is never written over.
+
+        Args:
+            src_root: Where the walk to the source starts. Not itself
+                allowed to be a symlink.
+            src_rel: The source, relative to ``src_root``.
+            dest_root: Where the walk to the destination starts, likewise.
+            dest_rel: The destination, relative to ``dest_root``. Missing
+                folders on the way are created, mode 755.
+            mode: The new file's mode.
+
+        Raises:
+            StepFailed: Anything but a plain file at the source, or any of
+                the refusals above. A partly written file is removed.
+        """
+        src, dest = src_root / src_rel, dest_root / dest_rel
+        self._show("copy", f"{src} -> {dest} [dim](mode {mode:o})[/dim]")
+        logger.info("copy %s -> %s", src, dest)
+        if self.dry_run:
+            return
+        create = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        try:
+            src_dir = _open_dir_nofollow(src_root, src_rel.parent.parts)
+            try:
+                # O_NONBLOCK so that a FIFO reaches the check below rather
+                # than hanging this open, and with it the whole class, forever.
+                source_fd = os.open(
+                    src_rel.name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=src_dir,
+                )
+            finally:
+                os.close(src_dir)
+            with os.fdopen(source_fd, "rb") as source:
+                if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                    raise StepFailed(f"{src} isn't a regular file")
+                dest_dir = _open_dir_nofollow(
+                    dest_root, dest_rel.parent.parts, create=True
+                )
+                try:
+                    target_fd = os.open(dest_rel.name, create, mode, dir_fd=dest_dir)
+                    try:
+                        with os.fdopen(target_fd, "wb") as target:
+                            shutil.copyfileobj(source, target)
+                            os.fchmod(target.fileno(), mode)
+                    except BaseException:
+                        os.unlink(dest_rel.name, dir_fd=dest_dir)
+                        raise
+                finally:
+                    os.close(dest_dir)
+        except OSError as error:
+            raise StepFailed(f"Couldn't copy {src} to {dest}: {error}") from error
+
     def same_content(self, left: Path, right: Path) -> bool:
         """True if both paths exist and hold identical bytes.
 
@@ -234,6 +309,31 @@ class Runner:
         change, the same reasoning as :meth:`read_text`.
         """
         return path.exists()
+
+    def kind_nofollow(
+        self, root: Path, rel: Path
+    ) -> Literal["file", "missing", "other"]:
+        """What is at ``root / rel``, without following any symlink to it.
+
+        ``"file"`` is a regular file reached entirely through real folders.
+        ``"missing"`` is nothing at all. ``"other"`` is everything else: a
+        folder, a FIFO, a symlink, or anything behind a symlink, which is
+        what separates this from :meth:`exists`.
+
+        Always checked for real, even in a dry run -- inspection, not a
+        change, the same reasoning as :meth:`read_text`.
+        """
+        try:
+            dir_fd = _open_dir_nofollow(root, rel.parent.parts)
+            try:
+                info = os.stat(rel.name, dir_fd=dir_fd, follow_symlinks=False)
+            finally:
+                os.close(dir_fd)
+        except FileNotFoundError:
+            return "missing"
+        except OSError:
+            return "other"
+        return "file" if stat.S_ISREG(info.st_mode) else "other"
 
     def count_files(self, path: Path) -> int:
         """How many regular files live under ``path``, recursively.
@@ -354,6 +454,38 @@ class Runner:
             return
         path.mkdir(parents=True, exist_ok=True, mode=mode)
 
+    def ensure_readonly_dir(self, path: Path, *, mode: int = 0o755) -> bool:
+        """Make ``path`` a directory that only this process can write to.
+
+        Creates it if nothing has the name. It takes this process's owner,
+        which on a real run is root, so nothing needs chowning. Unlike
+        :meth:`mkdir` this is safe in a folder a student controls: it never
+        follows a symlink, and it doesn't accept one of their own folders as
+        the real thing.
+
+        Returns:
+            True if the directory is there, or would be after a dry run.
+            False, having changed nothing, if something this process doesn't
+            own is already using the name.
+        """
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            self._show("mkdir", f"{path} [dim](mode {mode:o})[/dim]")
+            logger.info("mkdir %s", path)
+            if not self.dry_run:
+                os.mkdir(path, mode)
+                # mkdir's mode is cut down by the umask. By descriptor, not by
+                # name: chmod follows symlinks, and the name is the student's
+                # to swap the moment the directory exists.
+                dir_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    os.fchmod(dir_fd, mode)
+                finally:
+                    os.close(dir_fd)
+            return True
+        return stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid()
+
     def remove(self, paths: Iterable[Path]) -> None:
         """Delete files.  Directories and missing paths are skipped."""
         for path in paths:
@@ -384,6 +516,42 @@ class Runner:
         uid = pwd.getpwnam(user).pw_uid
         gid = grp.getgrnam(group).gr_gid
         os.chown(path, uid, gid)
+
+
+def _open_dir_nofollow(
+    root: Path, parts: Sequence[str], *, create: bool = False
+) -> int:
+    """Open ``root/parts...`` one folder at a time, refusing any symlink.
+
+    ``O_NOFOLLOW`` alone only protects the last part of a path, so a symlink
+    earlier in it would be followed; opening each folder relative to the one
+    before closes that gap. With ``create``, missing folders are made, mode
+    755 whatever the umask.
+
+    Returns:
+        An open descriptor, for the caller to close.
+
+    Raises:
+        OSError: A folder is missing, or isn't a real folder.
+    """
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(root, flags)
+    for part in parts:
+        try:
+            made = False
+            if create:
+                try:
+                    os.mkdir(part, 0o755, dir_fd=fd)
+                    made = True
+                except FileExistsError:
+                    pass
+            next_fd = os.open(part, flags, dir_fd=fd)
+        finally:
+            os.close(fd)
+        fd = next_fd
+        if made:
+            os.fchmod(fd, 0o755)
+    return fd
 
 
 def _lexer_for(path: Path) -> str:

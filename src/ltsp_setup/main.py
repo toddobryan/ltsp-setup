@@ -786,6 +786,59 @@ def student_push(
         console.print("Nobody to push to.")
 
 
+# --------------------------------------------------------------- collect
+
+
+@app.command("collect")
+def collect(
+    path: Annotated[
+        str,
+        typer.Argument(
+            help="File to collect, relative to each home directory, e.g. "
+            "image-exercises.rkt or labs/fall/programs.py."
+        ),
+    ],
+    groups: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--group",
+            "-g",
+            help="Collect from this section only. Repeat for more than one: "
+            "-g r1 -g r4. Defaults to students.collect_groups from config.",
+        ),
+    ] = None,
+    debug: DebugOption = True,
+    config: ConfigOption = None,
+) -> None:
+    """Collect a file from every student in the sections you teach.
+
+    jsmith30's labs/fall/programs.py, with jsmith30 in r1, is copied to
+    ~sysadmin/assignments/programs/r1/jsmith30.py and to
+    ~jsmith30/turned-in/labs/fall/programs.py, a folder they can read but not
+    change. The original stays where it is.
+
+    Nothing is written over: a file that has changed since it was collected
+    lands beside the first as jsmith30-2.py, and re-running is safe. Anything
+    but a plain file, or anything reached through a symlink, is skipped.
+    """
+    _require_root_to_look("collect")
+    result = students.collect_assignment(_context(debug, config), path, groups=groups)
+    verb = "would collect" if debug else "collected"
+    for entry in result.collected:
+        console.print(f"  [green]{verb}[/green] {entry}")
+    for entry in result.already_collected:
+        console.print(f"  [dim]already collected[/dim] {entry}")
+    for entry in result.missing:
+        console.print(f"  [yellow]missing[/yellow] {entry}")
+    for entry, reason in result.skipped:
+        console.print(f"  [red]skipped[/red] {entry} ({reason})")
+    console.print(
+        f"{len(result.collected)} {'to collect' if debug else 'collected'}, "
+        f"{len(result.already_collected)} already collected, "
+        f"{len(result.missing)} missing, {len(result.skipped)} skipped."
+    )
+
+
 # ---------------------------------------------------------------- config
 
 

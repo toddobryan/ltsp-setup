@@ -552,6 +552,55 @@ replaced. Copy it to a shared folder on `/home`, with a sticky `machines/`
 directory beside it, and run it at the desk. It dims one monitor to ask which
 side it is on, and `--csv` exports the records.
 
+### Collecting assignments
+
+`ltsp-setup collect labs/fall/programs.py` (Todd, 2026-11-04) copies that file
+from each student's home to
+`~sysadmin/assignments/programs/<section>/<username>.py` and to
+`~<username>/turned-in/labs/fall/programs.py`. The original stays put, so this
+deletes nothing. Assignment folders are named after the file alone, so the
+same filename in two different folders shares one assignment folder.
+
+Sections default to `students.collect_groups`, not all of `course_groups`,
+because `r2`, `hr` and `sa` don't hand in work this way. `--group`/`-g` narrows
+that and repeats, because a Red day is `-g r1 -g r4`. `collect` needs root even
+for a dry run, since student homes are 0750.
+
+**It runs as root in folders students control, so nothing there is trusted.**
+A submission that is a symlink to `/etc/shadow` would otherwise be copied into
+`turned-in` for the student to read. `labs` as a symlink into a classmate's home
+would file the classmate's work under this student's name. A `turned-in` swapped
+for a symlink would have root writing anywhere. Checking first isn't enough,
+because the student can swap the path after the check, and `O_NOFOLLOW` alone
+only covers the last part of a path. So `Runner.copy_nofollow` walks each path
+one folder at a time, relative to the last, with `O_NOFOLLOW` at every step and
+`O_EXCL` on the new file. `steps/students.py::collect_assignment` skips and
+reports that student and carries on. The cost is that a student's own harmless
+symlink on the way to their file also gets them skipped.
+
+**`turned-in` is owned by root, mode 755, and its files are root's, 644.** It
+can't be made by `/etc/skel`, since `useradd` hands everything there to the new
+user, so `collect` creates it for every student in the sections collected,
+including those with nothing to hand in yet. A student can't change what's in
+it, but they own the home it sits in, so they can rename it, or `rmdir` it while
+it's empty. `chattr +i` would stop that and would also break `student
+remove-stale`. It doesn't matter for grading: the folder is a receipt, and the
+copy that gets graded is out of their reach. If a student makes their own
+`turned-in`, they are skipped until it's removed by hand.
+
+**`assignments` is forced to 0700 on every run.** `/home` is mounted on every
+client, so a readable folder here would hand classmates each other's work.
+
+**Nothing is written over.** A file that has changed since it was collected
+lands beside the first as `jsmith30-2.py` and `programs-2.py`, the same numbering
+`student push` uses: whether the newer version replaces the older is a grading
+decision. Identical content adds nothing, so a re-run after any failure finishes
+the job without duplicates.
+
+Not yet run on the real server. It has been run through the real CLI under
+`unshare -r` against a scratch `/home`, which exercises everything except
+ownership by a real student account.
+
 ---
 
 ## Bugs found in the old code
