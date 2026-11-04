@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Monitor Layout
+Comment=Restores the desk's left and right monitors at login (steps/client.py::configure_monitors)
+Exec=/usr/local/sbin/ltsp-monitor-layout.sh
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

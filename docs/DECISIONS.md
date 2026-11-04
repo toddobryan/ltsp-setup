@@ -523,6 +523,30 @@ run against a stale install on the template earlier in the session (see
 here never would have caught either of these, only actually logging in on
 two real clients did.
 
+### Monitor layout
+
+Students' two monitors came up reversed or mirrored after login. A survey of
+145 students' saved `displays.xml` files and an inventory of all 30 computers
+(2026-11-04) found two causes. Cabling differs by desk: the left monitor is on
+DP-1 at 12 desks, DP-2 at 11 and DP-3 at 1, so no connector rule can work. And
+homes are on NFS, so a layout saved at one desk follows the student to the
+others; 21 files listed three active monitors on two-monitor desks.
+
+`steps/client.py::configure_monitors` (the client `monitors` stage) handles
+both. `data/lab-monitors.tsv` lists each desk's left and right monitor by the
+SHA-1 of its EDID, the same value Xfce stores and `sha1sum
+/sys/class/drm/*/edid` prints. LightDM's `display-setup-script` applies it
+before the greeter, an autostart entry applies it again in the session, and
+`session-setup-script` deletes the user's `displays.xml` first. Matching by
+monitor rather than connector survives swapped cables, and one replaced monitor
+is still placed by its partner. Unknown pairs go side by side in connector
+order. Students can still rearrange monitors, but it lasts only until logout.
+
+Only the hashes are in this public repo; the full inventory with MACs and
+serial numbers stays on the server. The table is in the image, so changing it
+means running the `monitors` stage and rebuilding. The weekly refresh does not
+run that stage by itself.
+
 ---
 
 ## Bugs found in the old code

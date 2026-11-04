@@ -10,8 +10,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ltsp_setup import templates
 from ltsp_setup.stages import Context
-from ltsp_setup.steps.common import apt_install, apt_update
+from ltsp_setup.steps.common import (
+    AUTOSTART_DIR,
+    LOCAL_SBIN,
+    apt_install,
+    apt_update,
+)
 from ltsp_setup.steps.server import LTSP_PPA
 
 # Not LTSP-related, but this template is always edited through a libvirt
@@ -34,12 +40,34 @@ VENV_DIR = Path("/opt/ltsp-setup")
 # re-runs bootstrap.sh anyway, which recreates it.
 ENTRY_POINT_LINK = Path("/usr/local/bin/ltsp-setup")
 
+MONITOR_TABLE = Path("/etc/ltsp-monitor-layout.tsv")
+LIGHTDM_CONF_DIR = Path("/etc/lightdm/lightdm.conf.d")
+
 
 def install_ltsp(ctx: Context) -> None:
     """Install the client half of LTSP from the LTSP PPA."""
     ctx.runner.run(["add-apt-repository", "-y", LTSP_PPA])
     apt_update(ctx)
     apt_install(ctx, CLIENT_PACKAGES, recommends=True)
+
+
+def configure_monitors(ctx: Context) -> None:
+    """Give every desk its real monitor layout, and stop saved ones roaming.
+
+    Client-only: the server console has one monitor and is not in the table.
+    See docs/DECISIONS.md, "Monitor layout", for why this goes by EDID hash.
+    """
+    for name in ("ltsp-monitor-layout.sh", "ltsp-clear-display-settings.sh"):
+        ctx.runner.write(LOCAL_SBIN / name, templates.read(name), mode=0o755)
+    ctx.runner.write(MONITOR_TABLE, templates.read("lab-monitors.tsv"))
+    ctx.runner.write(
+        LIGHTDM_CONF_DIR / "60-ltsp-monitor-layout.conf",
+        templates.read("ltsp-monitor-layout.conf"),
+    )
+    ctx.runner.write(
+        AUTOSTART_DIR / "ltsp-monitor-layout.desktop",
+        templates.read("ltsp-monitor-layout.desktop"),
+    )
 
 
 def cleanup_setup_tooling(ctx: Context) -> None:

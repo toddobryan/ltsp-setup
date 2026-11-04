@@ -69,6 +69,10 @@ def _desktop(ctx: Context) -> None:
     common.configure_chrome_cache_policy(ctx)
 
 
+def _client_monitors(ctx: Context) -> None:
+    client.configure_monitors(ctx)
+
+
 def _skel(ctx: Context) -> None:
     students.configure_skel(ctx)
 
@@ -133,6 +137,11 @@ CLIENT = Plan(
         Stage("apps", "Java, Racket, Chrome, VS Code and Rust", _apps),
         Stage("ltsp", "LTSP client and the Epoptes agent", _client_ltsp),
         Stage("desktop", "system-wide desktop defaults", _desktop, reboot_after=True),
+        Stage(
+            "monitors",
+            "each desk's left and right monitors, and no roaming saved layouts",
+            _client_monitors,
+        ),
     ],
 )
 
