@@ -547,6 +547,11 @@ serial numbers stays on the server. The table is in the image, so changing it
 means running the `monitors` stage and rebuilding. The weekly refresh does not
 run that stage by itself.
 
+`tools/desk-survey.py` made the inventory and can update it after a monitor is
+replaced. Copy it to a shared folder on `/home`, with a sticky `machines/`
+directory beside it, and run it at the desk. It dims one monitor to ask which
+side it is on, and `--csv` exports the records.
+
 ---
 
 ## Bugs found in the old code
