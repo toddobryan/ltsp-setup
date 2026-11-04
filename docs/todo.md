@@ -6,6 +6,22 @@ tweaks (those go in `desktop-polish-todo.md`) and aren't design decisions
 
 ## Open
 
+- [ ] **Follow up on the first real `collect`** (Todd, 2026-11-04). Collected
+      `arith`, `boolean-functions`, `image-exercises` and `image-functions`
+      from all five sections; 47-63 of 128 students had each file, so 65-81
+      got a notice warning of a zero. r4 came in high and w3 and w4 low
+      (`image-exercises`: 22 of 28 in r4, 6 of 25 in w3).
+      - Decide whether those sections had actually been assigned the work. If
+        not, they were warned wrongly, and clearing notices needs a way to do
+        it, since only collecting the file removes one today.
+      - Decide whether to add a report that searches each missing student's
+        home for similar filenames, to tell misplaced or misspelled files from
+        work that wasn't done.
+      - Look at a real `missing-*.txt` notice's owner and mode. One student's
+        `turned-in` has been checked, but that student had no notices.
+      - Log in as a student and confirm `turned-in` can be read but not
+        changed.
+      - More grading tools were planned after this one.
 - [ ] **A one-command way to edit and rebuild the client image** (Todd,
       2026-08-27) — **implemented 2026-09-09 as `ltsp-setup image refresh`,
       not yet run for real.** Boots the template, re-clones and re-bootstraps

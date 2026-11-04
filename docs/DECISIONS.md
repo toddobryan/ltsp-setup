@@ -607,9 +607,10 @@ lands beside the first as `jsmith30-2.py` and `programs-2.py`, the same numberin
 decision. Identical content adds nothing, so a re-run after any failure finishes
 the job without duplicates.
 
-Not yet run on the real server. It has been run through the real CLI under
-`unshare -r` against a scratch `/home`, which exercises everything except
-ownership by a real student account.
+First real run 2026-11-04: four assignments across all five sections on
+production. Everything under `assignments` and one student's `turned-in` were
+checked by hand and had the expected owners and modes. See `docs/todo.md` for
+what hasn't been checked yet.
 
 ---
 
